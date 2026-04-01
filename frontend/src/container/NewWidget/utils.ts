@@ -1,16 +1,19 @@
 import { Layout } from 'react-grid-layout';
-import { DefaultOptionType } from 'antd/es/select';
 import { omitIdFromQuery } from 'components/ExplorerCard/utils';
 import { PrecisionOptionsEnum } from 'components/Graph/types';
+import { YAxisCategoryNames } from 'components/YAxisUnitSelector/constants';
+import {
+	UniversalYAxisUnit,
+	YAxisCategory,
+	YAxisSource,
+} from 'components/YAxisUnitSelector/types';
+import { getYAxisCategories } from 'components/YAxisUnitSelector/utils';
 import {
 	ATTRIBUTE_TYPES,
 	initialQueryBuilderFormValuesMap,
 	PANEL_TYPES,
-} from 'constants/queryBuilder';
-import {
-	listViewInitialLogQuery,
 	PANEL_TYPES_INITIAL_QUERY,
-} from 'container/DashboardContainer/ComponentsSlider/constants';
+} from 'constants/queryBuilder';
 import {
 	defaultLogsSelectedColumns,
 	defaultTraceSelectedColumns,
@@ -23,11 +26,7 @@ import { MetricAggregation } from 'types/api/v5/queryRange';
 import { EQueryType } from 'types/common/dashboard';
 import { DataSource, MetricAggregateOperator } from 'types/common/queryBuilder';
 
-import {
-	dataTypeCategories,
-	getCategoryName,
-} from './RightContainer/dataFormatCategories';
-import { CategoryNames } from './RightContainer/types';
+import { getCategoryName } from './RightContainer/dataFormatCategories';
 
 export const getIsQueryModified = (
 	currentQuery: Query,
@@ -673,10 +672,7 @@ export const getDefaultWidgetData = (
 	nullZeroValues: '',
 	opacity: '',
 	panelTypes: name,
-	query:
-		name === PANEL_TYPES.LIST
-			? listViewInitialLogQuery
-			: PANEL_TYPES_INITIAL_QUERY[name],
+	query: PANEL_TYPES_INITIAL_QUERY[name],
 	timePreferance: 'GLOBAL_TIME',
 	softMax: null,
 	softMin: null,
@@ -737,14 +733,21 @@ export const PANEL_TYPE_TO_QUERY_TYPES: Record<PANEL_TYPES, EQueryType[]> = {
  * the label and value for each format.
  */
 export const getCategorySelectOptionByName = (
-	name?: CategoryNames | string,
-): DefaultOptionType[] =>
-	dataTypeCategories
-		.find((category) => category.name === name)
-		?.formats.map((format) => ({
-			label: format.name,
-			value: format.id,
-		})) || [];
+	name?: YAxisCategoryNames,
+): { name: string; id: UniversalYAxisUnit }[] => {
+	const categories = getYAxisCategories(YAxisSource.DASHBOARDS);
+	if (!categories.length) {
+		return [];
+	}
+	return (
+		categories
+			.find((category) => category.name === name)
+			?.units.map((unit) => ({
+				name: unit.name,
+				id: unit.id,
+			})) || []
+	);
+};
 
 /**
  * Generates unit options based on the provided column unit.
@@ -753,19 +756,19 @@ export const getCategorySelectOptionByName = (
  * select options. If a valid category is found, it filters the supported categories
  * to return only the options for the matched category.
  */
-export const unitOptions = (columnUnit: string): DefaultOptionType[] => {
+export const unitOptions = (columnUnit: string): YAxisCategory[] => {
 	const category = getCategoryName(columnUnit);
 	if (isEmpty(category)) {
 		return categoryToSupport.map((category) => ({
-			label: category,
-			options: getCategorySelectOptionByName(category),
+			name: category,
+			units: getCategorySelectOptionByName(category),
 		}));
 	}
 	return categoryToSupport
 		.filter((supportedCategory) => supportedCategory === category)
 		.map((filteredCategory) => ({
-			label: filteredCategory,
-			options: getCategorySelectOptionByName(filteredCategory),
+			name: filteredCategory,
+			units: getCategorySelectOptionByName(filteredCategory),
 		}));
 };
 

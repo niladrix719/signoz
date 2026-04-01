@@ -13,10 +13,13 @@ import (
 	"time"
 
 	"github.com/SigNoz/signoz/pkg/contextlinks"
+	"github.com/SigNoz/signoz/pkg/errors"
 	"github.com/SigNoz/signoz/pkg/query-service/common"
 	"github.com/SigNoz/signoz/pkg/query-service/model"
 	"github.com/SigNoz/signoz/pkg/query-service/postprocess"
 	"github.com/SigNoz/signoz/pkg/transition"
+	"github.com/SigNoz/signoz/pkg/types/ctxtypes"
+	"github.com/SigNoz/signoz/pkg/types/instrumentationtypes"
 	"github.com/SigNoz/signoz/pkg/types/ruletypes"
 	"github.com/SigNoz/signoz/pkg/types/telemetrytypes"
 	"github.com/SigNoz/signoz/pkg/valuer"
@@ -24,7 +27,6 @@ import (
 	"github.com/SigNoz/signoz/pkg/query-service/app/querier"
 	querierV2 "github.com/SigNoz/signoz/pkg/query-service/app/querier/v2"
 	"github.com/SigNoz/signoz/pkg/query-service/app/queryBuilder"
-	"github.com/SigNoz/signoz/pkg/query-service/constants"
 	"github.com/SigNoz/signoz/pkg/query-service/interfaces"
 	v3 "github.com/SigNoz/signoz/pkg/query-service/model/v3"
 	"github.com/SigNoz/signoz/pkg/query-service/utils/labels"
@@ -34,7 +36,7 @@ import (
 
 	logsv3 "github.com/SigNoz/signoz/pkg/query-service/app/logs/v3"
 	tracesV4 "github.com/SigNoz/signoz/pkg/query-service/app/traces/v4"
-	"github.com/SigNoz/signoz/pkg/query-service/formatter"
+	"github.com/SigNoz/signoz/pkg/units"
 
 	querierV5 "github.com/SigNoz/signoz/pkg/querier"
 
@@ -61,6 +63,8 @@ type ThresholdRule struct {
 	logsKeys  map[string]v3.AttributeKey
 	spansKeys map[string]v3.AttributeKey
 }
+
+var _ Rule = (*ThresholdRule)(nil)
 
 func NewThresholdRule(
 	id string,
@@ -432,7 +436,10 @@ func (r *ThresholdRule) buildAndRunQuery(ctx context.Context, orgID valuer.UUID,
 
 	var results []*v3.Result
 	var queryErrors map[string]error
-
+	ctx = ctxtypes.NewContextWithCommentVals(ctx, map[string]string{
+		instrumentationtypes.CodeNamespace:    "rules",
+		instrumentationtypes.CodeFunctionName: "buildAndRunQuery",
+	})
 	if r.version == "v4" {
 		results, queryErrors, err = r.querierV2.QueryRange(ctx, orgID, params)
 	} else {
@@ -440,14 +447,14 @@ func (r *ThresholdRule) buildAndRunQuery(ctx context.Context, orgID valuer.UUID,
 	}
 
 	if err != nil {
-		r.logger.ErrorContext(ctx, "failed to get alert query range result", "rule_name", r.Name(), "error", err, "query_errors", queryErrors)
+		r.logger.ErrorContext(ctx, "failed to get alert query range result", "rule_name", r.Name(), errors.Attr(err), "query_errors", queryErrors)
 		return nil, fmt.Errorf("internal error while querying")
 	}
 
 	if params.CompositeQuery.QueryType == v3.QueryTypeBuilder {
 		results, err = postprocess.PostProcessResult(results, params)
 		if err != nil {
-			r.logger.ErrorContext(ctx, "failed to post process result", "rule_name", r.Name(), "error", err)
+			r.logger.ErrorContext(ctx, "failed to post process result", "rule_name", r.Name(), errors.Attr(err))
 			return nil, fmt.Errorf("internal error while post processing")
 		}
 	}
@@ -462,25 +469,12 @@ func (r *ThresholdRule) buildAndRunQuery(ctx context.Context, orgID valuer.UUID,
 		}
 	}
 
-	if queryResult != nil && len(queryResult.Series) > 0 {
-		r.lastTimestampWithDatapoints = time.Now()
+	hasData := queryResult != nil && len(queryResult.Series) > 0
+	if missingDataAlert := r.HandleMissingDataAlert(ctx, ts, hasData); missingDataAlert != nil {
+		return ruletypes.Vector{*missingDataAlert}, nil
 	}
 
 	var resultVector ruletypes.Vector
-
-	// if the data is missing for `For` duration then we should send alert
-	if r.ruleCondition.AlertOnAbsent && r.lastTimestampWithDatapoints.Add(time.Duration(r.Condition().AbsentFor)*time.Minute).Before(time.Now()) {
-		r.logger.InfoContext(ctx, "no data found for rule condition", "rule_id", r.ID())
-		lbls := labels.NewBuilder(labels.Labels{})
-		if !r.lastTimestampWithDatapoints.IsZero() {
-			lbls.Set(ruletypes.LabelLastSeen, r.lastTimestampWithDatapoints.Format(constants.AlertTimeFormat))
-		}
-		resultVector = append(resultVector, ruletypes.Sample{
-			Metric:    lbls.Labels(),
-			IsMissing: true,
-		})
-		return resultVector, nil
-	}
 
 	if queryResult == nil {
 		r.logger.WarnContext(ctx, "query result is nil", "rule_name", r.Name(), "query_name", selectedQuery)
@@ -513,9 +507,14 @@ func (r *ThresholdRule) buildAndRunQueryV5(ctx context.Context, orgID valuer.UUI
 
 	var results []*v3.Result
 
+	ctx = ctxtypes.NewContextWithCommentVals(ctx, map[string]string{
+		instrumentationtypes.CodeNamespace:    "rules",
+		instrumentationtypes.CodeFunctionName: "buildAndRunQueryV5",
+	})
+
 	v5Result, err := r.querierV5.QueryRange(ctx, orgID, params)
 	if err != nil {
-		r.logger.ErrorContext(ctx, "failed to get alert query result", "rule_name", r.Name(), "error", err)
+		r.logger.ErrorContext(ctx, "failed to get alert query result", "rule_name", r.Name(), errors.Attr(err))
 		return nil, fmt.Errorf("internal error while querying")
 	}
 
@@ -538,25 +537,12 @@ func (r *ThresholdRule) buildAndRunQueryV5(ctx context.Context, orgID valuer.UUI
 		}
 	}
 
-	if queryResult != nil && len(queryResult.Series) > 0 {
-		r.lastTimestampWithDatapoints = time.Now()
+	hasData := queryResult != nil && len(queryResult.Series) > 0
+	if missingDataAlert := r.HandleMissingDataAlert(ctx, ts, hasData); missingDataAlert != nil {
+		return ruletypes.Vector{*missingDataAlert}, nil
 	}
 
 	var resultVector ruletypes.Vector
-
-	// if the data is missing for `For` duration then we should send alert
-	if r.ruleCondition.AlertOnAbsent && r.lastTimestampWithDatapoints.Add(time.Duration(r.Condition().AbsentFor)*time.Minute).Before(time.Now()) {
-		r.logger.InfoContext(ctx, "no data found for rule condition", "rule_id", r.ID())
-		lbls := labels.NewBuilder(labels.Labels{})
-		if !r.lastTimestampWithDatapoints.IsZero() {
-			lbls.Set(ruletypes.LabelLastSeen, r.lastTimestampWithDatapoints.Format(constants.AlertTimeFormat))
-		}
-		resultVector = append(resultVector, ruletypes.Sample{
-			Metric:    lbls.Labels(),
-			IsMissing: true,
-		})
-		return resultVector, nil
-	}
 
 	if queryResult == nil {
 		r.logger.WarnContext(ctx, "query result is nil", "rule_name", r.Name(), "query_name", selectedQuery)
@@ -569,7 +555,7 @@ func (r *ThresholdRule) buildAndRunQueryV5(ctx context.Context, orgID valuer.UUI
 		filteredSeries, filterErr := r.BaseRule.FilterNewSeries(ctx, ts, seriesToProcess)
 		// In case of error we log the error and continue with the original series
 		if filterErr != nil {
-			r.logger.ErrorContext(ctx, "Error filtering new series, ", "error", filterErr, "rule_name", r.Name())
+			r.logger.ErrorContext(ctx, "Error filtering new series, ", errors.Attr(filterErr), "rule_name", r.Name())
 		} else {
 			seriesToProcess = filteredSeries
 		}
@@ -596,7 +582,7 @@ func (r *ThresholdRule) buildAndRunQueryV5(ctx context.Context, orgID valuer.UUI
 func (r *ThresholdRule) Eval(ctx context.Context, ts time.Time) (int, error) {
 	prevState := r.State()
 
-	valueFormatter := formatter.FromUnit(r.Unit())
+	valueFormatter := units.FormatterFromUnit(r.Unit())
 
 	var res ruletypes.Vector
 	var err error
@@ -654,7 +640,7 @@ func (r *ThresholdRule) Eval(ctx context.Context, ts time.Time) (int, error) {
 			result, err := tmpl.Expand()
 			if err != nil {
 				result = fmt.Sprintf("<error expanding template: %s>", err)
-				r.logger.ErrorContext(ctx, "Expanding alert template failed", "error", err, "data", tmplData)
+				r.logger.ErrorContext(ctx, "Expanding alert template failed", errors.Attr(err), "data", tmplData)
 			}
 			return result
 		}
@@ -747,7 +733,7 @@ func (r *ThresholdRule) Eval(ctx context.Context, ts time.Time) (int, error) {
 	for fp, a := range r.Active {
 		labelsJSON, err := json.Marshal(a.QueryResultLables)
 		if err != nil {
-			r.logger.ErrorContext(ctx, "error marshaling labels", "error", err, "labels", a.Labels)
+			r.logger.ErrorContext(ctx, "error marshaling labels", errors.Attr(err), "labels", a.Labels)
 		}
 		if _, ok := resultFPs[fp]; !ok {
 			// If the alert was previously firing, keep it around for a given
@@ -773,7 +759,7 @@ func (r *ThresholdRule) Eval(ctx context.Context, ts time.Time) (int, error) {
 			continue
 		}
 
-		if a.State == model.StatePending && ts.Sub(a.ActiveAt) >= r.holdDuration {
+		if a.State == model.StatePending && ts.Sub(a.ActiveAt) >= r.holdDuration.Duration() {
 			r.logger.DebugContext(ctx, "converting pending alert to firing", "name", r.Name())
 			a.State = model.StateFiring
 			a.FiredAt = ts
@@ -839,7 +825,7 @@ func (r *ThresholdRule) String() string {
 	ar := ruletypes.PostableRule{
 		AlertName:         r.name,
 		RuleCondition:     r.ruleCondition,
-		EvalWindow:        ruletypes.Duration(r.evalWindow),
+		EvalWindow:        r.evalWindow,
 		Labels:            r.labels.Map(),
 		Annotations:       r.annotations.Map(),
 		PreferredChannels: r.preferredChannels,

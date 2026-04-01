@@ -1,9 +1,4 @@
-/* eslint-disable jsx-a11y/no-static-element-interactions */
-/* eslint-disable jsx-a11y/click-events-have-key-events */
 /* eslint-disable sonarjs/cognitive-complexity */
-/* eslint-disable react/jsx-props-no-spreading */
-/* eslint-disable no-nested-ternary */
-/* eslint-disable react/function-component-definition */
 import React, {
 	useCallback,
 	useEffect,
@@ -73,6 +68,7 @@ const CustomMultiSelect: React.FC<CustomMultiSelectProps> = ({
 	enableRegexOption = false,
 	isDynamicVariable = false,
 	showRetryButton = true,
+	waitingMessage,
 	...rest
 }) => {
 	// ===== State & Refs =====
@@ -140,10 +136,7 @@ const CustomMultiSelect: React.FC<CustomMultiSelectProps> = ({
 	}, [selectedValues, allAvailableValues, enableAllSelection]);
 
 	// Define allOptionShown earlier in the code
-	const allOptionShown = useMemo(
-		() => value === ALL_SELECTED_VALUE || value === 'ALL',
-		[value],
-	);
+	const allOptionShown = value === ALL_SELECTED_VALUE;
 
 	// Value passed to the underlying Ant Select component
 	const displayValue = useMemo(
@@ -408,6 +401,7 @@ const CustomMultiSelect: React.FC<CustomMultiSelectProps> = ({
 
 		const textToCopy = selectedTexts.join(', ');
 
+		// eslint-disable-next-line no-restricted-properties
 		navigator.clipboard.writeText(textToCopy).catch(console.error);
 	}, [selectedChips, selectedValues]);
 
@@ -1684,6 +1678,7 @@ const CustomMultiSelect: React.FC<CustomMultiSelectProps> = ({
 					{!loading &&
 						!errorMessage &&
 						!noDataMessage &&
+						!waitingMessage &&
 						!(showIncompleteDataMessage && isScrolledToBottom) && (
 							<section className="navigate">
 								<ArrowDown size={8} className="icons" />
@@ -1701,7 +1696,17 @@ const CustomMultiSelect: React.FC<CustomMultiSelectProps> = ({
 							<div className="navigation-text">Refreshing values...</div>
 						</div>
 					)}
-					{errorMessage && !loading && (
+					{!loading && waitingMessage && (
+						<div className="navigation-loading">
+							<div className="navigation-icons">
+								<LoadingOutlined />
+							</div>
+							<div className="navigation-text" title={waitingMessage}>
+								{waitingMessage}
+							</div>
+						</div>
+					)}
+					{errorMessage && !loading && !waitingMessage && (
 						<div className="navigation-error">
 							<div className="navigation-text">
 								{errorMessage || SOMETHING_WENT_WRONG}
@@ -1723,6 +1728,7 @@ const CustomMultiSelect: React.FC<CustomMultiSelectProps> = ({
 					{showIncompleteDataMessage &&
 						isScrolledToBottom &&
 						!loading &&
+						!waitingMessage &&
 						!errorMessage && (
 							<div className="navigation-text-incomplete">
 								Don&apos;t see the value? Use search
@@ -1765,6 +1771,7 @@ const CustomMultiSelect: React.FC<CustomMultiSelectProps> = ({
 		isDarkMode,
 		isDynamicVariable,
 		showRetryButton,
+		waitingMessage,
 	]);
 
 	// Custom handler for dropdown visibility changes

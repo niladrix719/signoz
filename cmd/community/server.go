@@ -4,12 +4,16 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/spf13/cobra"
+
 	"github.com/SigNoz/signoz/cmd"
 	"github.com/SigNoz/signoz/pkg/analytics"
 	"github.com/SigNoz/signoz/pkg/authn"
 	"github.com/SigNoz/signoz/pkg/authz"
 	"github.com/SigNoz/signoz/pkg/authz/openfgaauthz"
 	"github.com/SigNoz/signoz/pkg/authz/openfgaschema"
+	"github.com/SigNoz/signoz/pkg/authz/openfgaserver"
+	"github.com/SigNoz/signoz/pkg/errors"
 	"github.com/SigNoz/signoz/pkg/factory"
 	"github.com/SigNoz/signoz/pkg/gateway"
 	"github.com/SigNoz/signoz/pkg/gateway/noopgateway"
@@ -18,8 +22,6 @@ import (
 	"github.com/SigNoz/signoz/pkg/modules/dashboard"
 	"github.com/SigNoz/signoz/pkg/modules/dashboard/impldashboard"
 	"github.com/SigNoz/signoz/pkg/modules/organization"
-	"github.com/SigNoz/signoz/pkg/modules/role"
-	"github.com/SigNoz/signoz/pkg/modules/role/implrole"
 	"github.com/SigNoz/signoz/pkg/querier"
 	"github.com/SigNoz/signoz/pkg/query-service/app"
 	"github.com/SigNoz/signoz/pkg/queryparser"
@@ -30,18 +32,17 @@ import (
 	"github.com/SigNoz/signoz/pkg/version"
 	"github.com/SigNoz/signoz/pkg/zeus"
 	"github.com/SigNoz/signoz/pkg/zeus/noopzeus"
-	"github.com/spf13/cobra"
 )
 
 func registerServer(parentCmd *cobra.Command, logger *slog.Logger) {
-	var flags signoz.DeprecatedFlags
+	var configFiles []string
 
 	serverCmd := &cobra.Command{
 		Use:                "server",
 		Short:              "Run the SigNoz server",
 		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 		RunE: func(currCmd *cobra.Command, args []string) error {
-			config, err := cmd.NewSigNozConfig(currCmd.Context(), logger, flags)
+			config, err := cmd.NewSigNozConfig(currCmd.Context(), logger, configFiles)
 			if err != nil {
 				return err
 			}
@@ -50,7 +51,7 @@ func registerServer(parentCmd *cobra.Command, logger *slog.Logger) {
 		},
 	}
 
-	flags.RegisterFlags(serverCmd)
+	serverCmd.Flags().StringArrayVar(&configFiles, "config", nil, "path to a YAML configuration file (can be specified multiple times, later files override earlier ones)")
 	parentCmd.AddCommand(serverCmd)
 }
 
@@ -78,51 +79,56 @@ func runServer(ctx context.Context, config signoz.Config, logger *slog.Logger) e
 		func(ctx context.Context, providerSettings factory.ProviderSettings, store authtypes.AuthNStore, licensing licensing.Licensing) (map[authtypes.AuthNProvider]authn.AuthN, error) {
 			return signoz.NewAuthNs(ctx, providerSettings, store, licensing)
 		},
-		func(ctx context.Context, sqlstore sqlstore.SQLStore) factory.ProviderFactory[authz.AuthZ, authz.Config] {
-			return openfgaauthz.NewProviderFactory(sqlstore, openfgaschema.NewSchema().Get(ctx))
+		func(ctx context.Context, sqlstore sqlstore.SQLStore, _ licensing.Licensing, _ dashboard.Module) (factory.ProviderFactory[authz.AuthZ, authz.Config], error) {
+			openfgaDataStore, err := openfgaserver.NewSQLStore(sqlstore)
+			if err != nil {
+				return nil, err
+			}
+
+			return openfgaauthz.NewProviderFactory(sqlstore, openfgaschema.NewSchema().Get(ctx), openfgaDataStore), nil
 		},
-		func(store sqlstore.SQLStore, settings factory.ProviderSettings, analytics analytics.Analytics, orgGetter organization.Getter, _ role.Setter, _ role.Granter, queryParser queryparser.QueryParser, _ querier.Querier, _ licensing.Licensing) dashboard.Module {
+		func(store sqlstore.SQLStore, settings factory.ProviderSettings, analytics analytics.Analytics, orgGetter organization.Getter, queryParser queryparser.QueryParser, _ querier.Querier, _ licensing.Licensing) dashboard.Module {
 			return impldashboard.NewModule(impldashboard.NewStore(store), settings, analytics, orgGetter, queryParser)
 		},
 		func(_ licensing.Licensing) factory.ProviderFactory[gateway.Gateway, gateway.Config] {
 			return noopgateway.NewProviderFactory()
 		},
-		func(store sqlstore.SQLStore, authz authz.AuthZ, licensing licensing.Licensing, _ []role.RegisterTypeable) role.Setter {
-			return implrole.NewSetter(implrole.NewStore(store), authz)
+		func(ps factory.ProviderSettings, q querier.Querier, a analytics.Analytics) querier.Handler {
+			return querier.NewHandler(ps, q, a)
 		},
 	)
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to create signoz", "error", err)
+		logger.ErrorContext(ctx, "failed to create signoz", errors.Attr(err))
 		return err
 	}
 
 	server, err := app.NewServer(config, signoz)
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to create server", "error", err)
+		logger.ErrorContext(ctx, "failed to create server", errors.Attr(err))
 		return err
 	}
 
 	if err := server.Start(ctx); err != nil {
-		logger.ErrorContext(ctx, "failed to start server", "error", err)
+		logger.ErrorContext(ctx, "failed to start server", errors.Attr(err))
 		return err
 	}
 
 	signoz.Start(ctx)
 
 	if err := signoz.Wait(ctx); err != nil {
-		logger.ErrorContext(ctx, "failed to start signoz", "error", err)
+		logger.ErrorContext(ctx, "failed to start signoz", errors.Attr(err))
 		return err
 	}
 
 	err = server.Stop(ctx)
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to stop server", "error", err)
+		logger.ErrorContext(ctx, "failed to stop server", errors.Attr(err))
 		return err
 	}
 
 	err = signoz.Stop(ctx)
 	if err != nil {
-		logger.ErrorContext(ctx, "failed to stop signoz", "error", err)
+		logger.ErrorContext(ctx, "failed to stop signoz", errors.Attr(err))
 		return err
 	}
 

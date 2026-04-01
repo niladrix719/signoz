@@ -1,6 +1,6 @@
 import { PrecisionOption } from 'components/Graph/types';
 import { PANEL_TYPES } from 'constants/queryBuilder';
-import uPlot, { Cursor, Options, Series } from 'uplot';
+import uPlot, { Series } from 'uplot';
 
 import { ThresholdsDrawHookOptions } from '../hooks/types';
 
@@ -23,12 +23,23 @@ export abstract class ConfigBuilder<P, T> {
 }
 
 /**
+ * Preferences source for the uPlot config builder
+ */
+export enum SelectionPreferencesSource {
+	LOCAL_STORAGE = 'LOCAL_STORAGE',
+	IN_MEMORY = 'IN_MEMORY',
+}
+
+/**
  * Props for configuring the uPlot config builder
  */
 export interface ConfigBuilderProps {
-	widgetId?: string;
+	id: string;
 	onDragSelect?: (startTime: number, endTime: number) => void;
 	tzDate?: uPlot.LocalDateFromUnix;
+	selectionPreferencesSource?: SelectionPreferencesSource;
+	shouldSaveSelectionPreference?: boolean;
+	stepInterval?: number;
 }
 
 /**
@@ -88,25 +99,25 @@ export interface ScaleProps {
 	distribution?: DistributionType;
 }
 
+export enum DisconnectedValuesMode {
+	Never = 'never',
+	Threshold = 'threshold',
+}
+
 /**
  * Props for configuring a series
  */
 
-export enum FillStyle {
+export enum LineStyle {
 	Solid = 'solid',
-	Dash = 'dash',
-	Dot = 'dot',
-	Square = 'square',
-}
-
-export interface LineStyle {
-	dash?: Array<number>;
-	fill?: FillStyle;
+	Dashed = 'dashed',
 }
 
 export enum DrawStyle {
 	Line = 'line',
 	Points = 'points',
+	Bar = 'bar',
+	Histogram = 'histogram',
 }
 
 export enum LineInterpolation {
@@ -116,36 +127,73 @@ export enum LineInterpolation {
 	StepBefore = 'stepBefore',
 }
 
-export enum VisibilityMode {
-	Always = 'always',
-	Auto = 'auto',
-	Never = 'never',
+/**
+ * Props for configuring lines
+ */
+export interface LineConfig {
+	lineColor?: string;
+	lineInterpolation?: LineInterpolation;
+	lineStyle?: LineStyle;
+	lineWidth?: number;
+	lineCap?: Series.Cap;
 }
 
-export interface SeriesProps {
+/**
+ * Alignment of bars
+ */
+export enum BarAlignment {
+	After = 1,
+	Before = -1,
+	Center = 0,
+}
+
+/**
+ * Props for configuring bars
+ */
+export interface BarConfig {
+	barAlignment?: BarAlignment;
+	barMaxWidth?: number;
+	barWidthFactor?: number;
+}
+
+/**
+ * Props for configuring points
+ */
+export interface PointsConfig {
+	pointColor?: string;
+	pointSize?: number;
+	showPoints?: boolean;
+}
+
+export enum FillMode {
+	Solid = 'solid',
+	Gradient = 'gradient',
+	None = 'none',
+}
+
+export interface SeriesProps extends LineConfig, PointsConfig, BarConfig {
 	scaleKey: string;
 	label?: string;
-
 	colorMapping: Record<string, string>;
 	drawStyle: DrawStyle;
 	pathBuilder?: Series.PathBuilder;
 	pointsFilter?: Series.Points.Filter;
 	pointsBuilder?: Series.Points.Show;
 	show?: boolean;
-	spanGaps?: boolean;
-
+	/**
+	 * Controls how nulls are treated for this series.
+	 *
+	 * - boolean: mapped directly to uPlot's spanGaps behavior
+	 * - number: interpreted as an X-axis threshold (same unit as ref values),
+	 *           where gaps smaller than this threshold are spanned by
+	 *           converting short null runs to undefined during data prep
+	 *           while uPlot's internal spanGaps is kept disabled.
+	 */
+	spanGaps?: boolean | number;
+	fillColor?: string;
+	fillMode?: FillMode;
 	isDarkMode?: boolean;
-
-	// Line config
-	lineColor?: string;
-	lineInterpolation?: LineInterpolation;
-	lineStyle?: LineStyle;
-	lineWidth?: number;
-
-	// Points config
-	pointColor?: string;
-	pointSize?: number;
-	showPoints?: VisibilityMode;
+	stepInterval?: number;
 }
 
 export interface LegendItem {
@@ -154,47 +202,3 @@ export interface LegendItem {
 	color: uPlot.Series['stroke'];
 	show: boolean;
 }
-
-export const DEFAULT_PLOT_CONFIG: Partial<Options> = {
-	focus: {
-		alpha: 0.3,
-	},
-	cursor: {
-		focus: {
-			prox: 30,
-		},
-	},
-	legend: {
-		show: false,
-	},
-	padding: [16, 16, 8, 8],
-	series: [],
-	hooks: {},
-};
-
-const POINTS_FILL_COLOR = '#FFFFFF';
-
-export const DEFAULT_CURSOR_CONFIG: Cursor = {
-	drag: { setScale: true },
-	points: {
-		one: true,
-		size: (u, seriesIdx) => (u.series[seriesIdx]?.points?.size ?? 0) * 3,
-		width: (_u, _seriesIdx, size) => size / 4,
-		stroke: (u, seriesIdx): string => {
-			const points = u.series[seriesIdx]?.points;
-			const strokeFn =
-				typeof points?.stroke === 'function' ? points.stroke : undefined;
-			const strokeValue =
-				strokeFn !== undefined
-					? strokeFn(u, seriesIdx)
-					: typeof points?.stroke === 'string'
-					? points.stroke
-					: '';
-			return `${strokeValue}90`;
-		},
-		fill: (): string => POINTS_FILL_COLOR,
-	},
-	focus: {
-		prox: 30,
-	},
-};

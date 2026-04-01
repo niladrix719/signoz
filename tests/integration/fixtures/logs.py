@@ -1,14 +1,17 @@
 import datetime
 import json
 from abc import ABC
-from typing import Any, Callable, Generator, List, Optional
+from http import HTTPStatus
+from typing import Any, Callable, Generator, List, Literal, Optional
 
 import numpy as np
 import pytest
+import requests
 from ksuid import KsuidMs
 
 from fixtures import types
 from fixtures.fingerprint import LogsOrTracesFingerprint
+from fixtures.utils import parse_timestamp
 
 
 class LogsResource(ABC):
@@ -103,6 +106,7 @@ class Logs(ABC):
     attributes_number: dict[str, np.float64]
     attributes_bool: dict[str, bool]
     resources_string: dict[str, str]
+    resource_json: dict[str, str]
     scope_name: str
     scope_version: str
     scope_string: dict[str, str]
@@ -125,6 +129,7 @@ class Logs(ABC):
         scope_name: str = "",
         scope_version: str = "",
         scope_attributes: dict[str, str] = {},
+        resource_write_mode: Literal["legacy_only", "dual_write"] = "dual_write",
     ) -> None:
         if timestamp is None:
             timestamp = datetime.datetime.now()
@@ -164,6 +169,9 @@ class Logs(ABC):
 
         # Process resources and attributes
         self.resources_string = {k: str(v) for k, v in resources.items()}
+        self.resource_json = (
+            {} if resource_write_mode == "legacy_only" else dict(self.resources_string)
+        )
         for k, v in self.resources_string.items():
             self.tag_attributes.append(
                 LogsTagAttributes(
@@ -325,9 +333,62 @@ class Logs(ABC):
                 self.scope_name,
                 self.scope_version,
                 self.scope_string,
-                self.resources_string,
+                self.resource_json,
             ]
         )
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict,
+    ) -> "Logs":
+        """Create a Logs instance from a dict."""
+        # parse timestamp from iso format
+        timestamp = parse_timestamp(data["timestamp"])
+        return cls(
+            timestamp=timestamp,
+            resources=data.get("resources", {}),
+            attributes=data.get("attributes", {}),
+            body=data["body"],
+            severity_text=data.get("severity_text", "INFO"),
+        )
+
+    @classmethod
+    def load_from_file(
+        cls,
+        file_path: str,
+        base_time: Optional[datetime.datetime] = None,
+    ) -> List["Logs"]:
+        """Load logs from a JSONL file."""
+
+        data_list = []
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                data_list.append(json.loads(line))
+
+        # If base_time provided, calculate time offset
+        time_offset = datetime.timedelta(0)
+        if base_time is not None:
+            # Find earliest timestamp
+            earliest = None
+            for data in data_list:
+                ts = parse_timestamp(data["timestamp"])
+                if earliest is None or ts < earliest:
+                    earliest = ts
+            if earliest is not None:
+                time_offset = base_time - earliest
+
+        logs = []
+        for data in data_list:
+            original_ts = parse_timestamp(data["timestamp"])
+            adjusted_ts = original_ts + time_offset
+            data["timestamp"] = adjusted_ts.isoformat()
+            logs.append(cls.from_dict(data))
+
+        return logs
 
 
 @pytest.fixture(name="insert_logs", scope="function")
@@ -437,6 +498,54 @@ def insert_logs(
     clickhouse.conn.query(
         f"TRUNCATE TABLE signoz_logs.logs_resource_keys ON CLUSTER '{clickhouse.env['SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_CLUSTER']}' SYNC"
     )
+
+
+@pytest.fixture(name="materialize_log_field", scope="function")
+def materialize_log_field(
+    signoz: types.SigNoz,
+) -> Generator[Callable[[str, str, str, str], None], None, None]:
+    mat_fields: List[tuple[str, str, str]] = []
+
+    def _materialize_log_field(
+        token: str,
+        name: str,
+        data_type: str,
+        field_type: str,
+    ) -> None:
+        response = requests.post(
+            signoz.self.host_configs["8080"].get("/api/v1/logs/fields"),
+            headers={"authorization": f"Bearer {token}"},
+            json={
+                "name": name,
+                "dataType": data_type,
+                "type": field_type,
+                "selected": True,
+            },
+            timeout=10,
+        )
+        assert response.status_code == HTTPStatus.OK, (
+            f"Failed to materialize log field {name}: "
+            f"{response.status_code} {response.text}"
+        )
+        mat_fields.append((field_type, data_type, name))
+
+    yield _materialize_log_field
+
+    for mat_field_type, mat_field_data_type, mat_field_name in mat_fields:
+        mat_field_name = mat_field_name.replace(".", "$$")
+        if mat_field_type == "resources":
+            mat_field_type = "resource"
+        field = f"{mat_field_type}_{mat_field_data_type}_{mat_field_name}"
+        signoz.telemetrystore.conn.query(
+            f"ALTER TABLE signoz_logs.logs_v2 ON CLUSTER '{signoz.telemetrystore.env['SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_CLUSTER']}' DROP INDEX IF EXISTS {field}_idx"
+        )
+        for table in ["logs_v2", "distributed_logs_v2"]:
+            signoz.telemetrystore.conn.query(
+                f"ALTER TABLE signoz_logs.{table} ON CLUSTER '{signoz.telemetrystore.env['SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_CLUSTER']}' DROP COLUMN IF EXISTS {field}"
+            )
+            signoz.telemetrystore.conn.query(
+                f"ALTER TABLE signoz_logs.{table} ON CLUSTER '{signoz.telemetrystore.env['SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_CLUSTER']}' DROP COLUMN IF EXISTS {field}_exists"
+            )
 
 
 @pytest.fixture(name="ttl_legacy_logs_v2_table_setup", scope="function")

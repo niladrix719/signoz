@@ -14,6 +14,7 @@ import { useNavigateToExplorer } from 'components/CeleryTask/useNavigateToExplor
 import { ToggleGraphProps } from 'components/Graph/types';
 import { QueryParams } from 'constants/query';
 import { PANEL_TYPES } from 'constants/queryBuilder';
+import { PanelMode } from 'container/DashboardContainer/visualization/panels/types';
 import { placeWidgetAtBottom } from 'container/NewWidget/utils';
 import PanelWrapper from 'container/PanelWrapper/PanelWrapper';
 import useGetResolvedText from 'hooks/dashboard/useGetResolvedText';
@@ -27,7 +28,7 @@ import {
 	getCustomTimeRangeWindowSweepInMS,
 	getStartAndEndTimesInMilliseconds,
 } from 'pages/MessagingQueues/MessagingQueuesUtils';
-import { useDashboard } from 'providers/Dashboard/Dashboard';
+import { useDashboardStore } from 'providers/Dashboard/store/useDashboardStore';
 import { Widgets } from 'types/api/dashboard/getAll';
 import { Props } from 'types/api/dashboard/update';
 import { EQueryType } from 'types/common/dashboard';
@@ -100,7 +101,19 @@ function WidgetGraphComponent({
 
 	const navigateToExplorerPages = useNavigateToExplorerPages();
 
-	const { setLayouts, selectedDashboard, setSelectedDashboard } = useDashboard();
+	const {
+		setLayouts,
+		selectedDashboard,
+		setSelectedDashboard,
+		setColumnWidths,
+	} = useDashboardStore();
+
+	const onColumnWidthsChange = useCallback(
+		(widths: Record<string, number>) => {
+			setColumnWidths((prev) => ({ ...prev, [widget.id]: widths }));
+		},
+		[setColumnWidths, widget.id],
+	);
 
 	const onToggleModal = useCallback(
 		(func: Dispatch<SetStateAction<boolean>>) => {
@@ -407,6 +420,7 @@ function WidgetGraphComponent({
 					ref={graphRef}
 				>
 					<PanelWrapper
+						panelMode={PanelMode.DASHBOARD_VIEW}
 						widget={widget}
 						queryResponse={queryResponse}
 						setRequestData={setRequestData}
@@ -422,6 +436,7 @@ function WidgetGraphComponent({
 						customSeries={customSeries}
 						customOnRowClick={customOnRowClick}
 						enableDrillDown={enableDrillDown}
+						onColumnWidthsChange={onColumnWidthsChange}
 					/>
 				</div>
 			)}

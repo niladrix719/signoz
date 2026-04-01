@@ -8,17 +8,20 @@ import (
 	"time"
 
 	"github.com/SigNoz/signoz/pkg/errors"
+	"github.com/SigNoz/signoz/pkg/modules/rulestatehistory"
+	"github.com/SigNoz/signoz/pkg/query-service/constants"
 	"github.com/SigNoz/signoz/pkg/query-service/interfaces"
 	"github.com/SigNoz/signoz/pkg/query-service/model"
 	v3 "github.com/SigNoz/signoz/pkg/query-service/model/v3"
+	"github.com/SigNoz/signoz/pkg/query-service/utils/labels"
 	qslabels "github.com/SigNoz/signoz/pkg/query-service/utils/labels"
 	"github.com/SigNoz/signoz/pkg/queryparser"
 	"github.com/SigNoz/signoz/pkg/sqlstore"
 	qbtypes "github.com/SigNoz/signoz/pkg/types/querybuildertypes/querybuildertypesv5"
+	"github.com/SigNoz/signoz/pkg/types/rulestatehistorytypes"
 	"github.com/SigNoz/signoz/pkg/types/ruletypes"
 	"github.com/SigNoz/signoz/pkg/types/telemetrytypes"
 	"github.com/SigNoz/signoz/pkg/valuer"
-	"go.uber.org/zap"
 )
 
 // BaseRule contains common fields and methods for all rule types
@@ -38,13 +41,13 @@ type BaseRule struct {
 	// evalWindow is the time window used for evaluating the rule
 	// i.e. each time we lookback from the current time, we look at data for the last
 	// evalWindow duration
-	evalWindow time.Duration
+	evalWindow valuer.TextDuration
 	// holdDuration is the duration for which the alert waits before firing
-	holdDuration time.Duration
+	holdDuration valuer.TextDuration
 
 	// evalDelay is the delay in evaluation of the rule
 	// this is useful in cases where the data is not available immediately
-	evalDelay time.Duration
+	evalDelay valuer.TextDuration
 
 	// holds the static set of labels and annotations for the rule
 	// these are the same for all alerts created for this rule
@@ -92,7 +95,9 @@ type BaseRule struct {
 	evaluation ruletypes.Evaluation
 
 	// newGroupEvalDelay is the grace period for new alert groups
-	newGroupEvalDelay *time.Duration
+	newGroupEvalDelay valuer.TextDuration
+
+	ruleStateHistoryModule rulestatehistory.Module
 
 	queryParser queryparser.QueryParser
 }
@@ -111,7 +116,7 @@ func WithSendUnmatched() RuleOption {
 	}
 }
 
-func WithEvalDelay(dur time.Duration) RuleOption {
+func WithEvalDelay(dur valuer.TextDuration) RuleOption {
 	return func(r *BaseRule) {
 		r.evalDelay = dur
 	}
@@ -141,6 +146,12 @@ func WithMetadataStore(metadataStore telemetrytypes.MetadataStore) RuleOption {
 	}
 }
 
+func WithRuleStateHistoryModule(module rulestatehistory.Module) RuleOption {
+	return func(r *BaseRule) {
+		r.ruleStateHistoryModule = module
+	}
+}
+
 func NewBaseRule(id string, orgID valuer.UUID, p *ruletypes.PostableRule, reader interfaces.Reader, opts ...RuleOption) (*BaseRule, error) {
 	if p.RuleCondition == nil || !p.RuleCondition.IsValid() {
 		return nil, fmt.Errorf("invalid rule condition")
@@ -161,7 +172,7 @@ func NewBaseRule(id string, orgID valuer.UUID, p *ruletypes.PostableRule, reader
 		source:            p.Source,
 		typ:               p.AlertType,
 		ruleCondition:     p.RuleCondition,
-		evalWindow:        time.Duration(p.EvalWindow),
+		evalWindow:        p.EvalWindow,
 		labels:            qslabels.FromMap(p.Labels),
 		annotations:       qslabels.FromMap(p.Annotations),
 		preferredChannels: p.PreferredChannels,
@@ -174,13 +185,12 @@ func NewBaseRule(id string, orgID valuer.UUID, p *ruletypes.PostableRule, reader
 	}
 
 	// Store newGroupEvalDelay and groupBy keys from NotificationSettings
-	if p.NotificationSettings != nil && p.NotificationSettings.NewGroupEvalDelay != nil {
-		newGroupEvalDelay := time.Duration(*p.NotificationSettings.NewGroupEvalDelay)
-		baseRule.newGroupEvalDelay = &newGroupEvalDelay
+	if p.NotificationSettings != nil {
+		baseRule.newGroupEvalDelay = p.NotificationSettings.NewGroupEvalDelay
 	}
 
-	if baseRule.evalWindow == 0 {
-		baseRule.evalWindow = 5 * time.Minute
+	if baseRule.evalWindow.IsZero() {
+		baseRule.evalWindow = valuer.MustParseTextDuration("5m")
 	}
 
 	for _, opt := range opts {
@@ -243,15 +253,15 @@ func (r *BaseRule) ActiveAlertsLabelFP() map[uint64]struct{} {
 	return activeAlerts
 }
 
-func (r *BaseRule) EvalDelay() time.Duration {
+func (r *BaseRule) EvalDelay() valuer.TextDuration {
 	return r.evalDelay
 }
 
-func (r *BaseRule) EvalWindow() time.Duration {
+func (r *BaseRule) EvalWindow() valuer.TextDuration {
 	return r.evalWindow
 }
 
-func (r *BaseRule) HoldDuration() time.Duration {
+func (r *BaseRule) HoldDuration() valuer.TextDuration {
 	return r.holdDuration
 }
 
@@ -279,7 +289,7 @@ func (r *BaseRule) Timestamps(ts time.Time) (time.Time, time.Time) {
 	start := st.UnixMilli()
 	end := en.UnixMilli()
 
-	if r.evalDelay > 0 {
+	if r.evalDelay.IsPositive() {
 		start = start - r.evalDelay.Milliseconds()
 		end = end - r.evalDelay.Milliseconds()
 	}
@@ -369,7 +379,7 @@ func (r *BaseRule) SendAlerts(ctx context.Context, ts time.Time, resendDelay tim
 		Limit(1).
 		Scan(ctx, &orgID)
 	if err != nil {
-		r.logger.ErrorContext(ctx, "failed to get org ids", "error", err)
+		r.logger.ErrorContext(ctx, "failed to get org ids", errors.Attr(err))
 		return
 	}
 
@@ -399,98 +409,56 @@ func (r *BaseRule) ForEachActiveAlert(f func(*ruletypes.Alert)) {
 }
 
 func (r *BaseRule) RecordRuleStateHistory(ctx context.Context, prevState, currentState model.AlertState, itemsToAdd []model.RuleStateHistory) error {
-	zap.L().Debug("recording rule state history", zap.String("ruleid", r.ID()), zap.Any("prevState", prevState), zap.Any("currentState", currentState), zap.Any("itemsToAdd", itemsToAdd))
-	revisedItemsToAdd := map[uint64]model.RuleStateHistory{}
+	if r.ruleStateHistoryModule == nil {
+		return nil
+	}
 
-	lastSavedState, err := r.reader.GetLastSavedRuleStateHistory(ctx, r.ID())
-	if err != nil {
+	if err := r.ruleStateHistoryModule.RecordRuleStateHistory(ctx, r.ID(), r.handledRestart, toRuleStateHistoryTypes(itemsToAdd)); err != nil {
+		r.logger.ErrorContext(ctx, "error while recording rule state history", errors.Attr(err), slog.Any("itemsToAdd", itemsToAdd))
 		return err
-	}
-	// if the query-service has been restarted, or the rule has been modified (which re-initializes the rule),
-	// the state would reset so we need to add the corresponding state changes to previously saved states
-	if !r.handledRestart && len(lastSavedState) > 0 {
-		zap.L().Debug("handling restart", zap.String("ruleid", r.ID()), zap.Any("lastSavedState", lastSavedState))
-		l := map[uint64]model.RuleStateHistory{}
-		for _, item := range itemsToAdd {
-			l[item.Fingerprint] = item
-		}
-
-		shouldSkip := map[uint64]bool{}
-
-		for _, item := range lastSavedState {
-			// for the last saved item with fingerprint, check if there is a corresponding entry in the current state
-			currentState, ok := l[item.Fingerprint]
-			if !ok {
-				// there was a state change in the past, but not in the current state
-				// if the state was firing, then we should add a resolved state change
-				if item.State == model.StateFiring || item.State == model.StateNoData {
-					item.State = model.StateInactive
-					item.StateChanged = true
-					item.UnixMilli = time.Now().UnixMilli()
-					revisedItemsToAdd[item.Fingerprint] = item
-				}
-				// there is nothing to do if the prev state was normal
-			} else {
-				if item.State != currentState.State {
-					item.State = currentState.State
-					item.StateChanged = true
-					item.UnixMilli = time.Now().UnixMilli()
-					revisedItemsToAdd[item.Fingerprint] = item
-				}
-			}
-			// do not add this item to revisedItemsToAdd as it is already processed
-			shouldSkip[item.Fingerprint] = true
-		}
-		zap.L().Debug("after lastSavedState loop", zap.String("ruleid", r.ID()), zap.Any("revisedItemsToAdd", revisedItemsToAdd))
-
-		// if there are any new state changes that were not saved, add them to the revised items
-		for _, item := range itemsToAdd {
-			if _, ok := revisedItemsToAdd[item.Fingerprint]; !ok && !shouldSkip[item.Fingerprint] {
-				revisedItemsToAdd[item.Fingerprint] = item
-			}
-		}
-		zap.L().Debug("after itemsToAdd loop", zap.String("ruleid", r.ID()), zap.Any("revisedItemsToAdd", revisedItemsToAdd))
-
-		newState := model.StateInactive
-		for _, item := range revisedItemsToAdd {
-			if item.State == model.StateFiring || item.State == model.StateNoData {
-				newState = model.StateFiring
-				break
-			}
-		}
-		zap.L().Debug("newState", zap.String("ruleid", r.ID()), zap.Any("newState", newState))
-
-		// if there is a change in the overall state, update the overall state
-		if lastSavedState[0].OverallState != newState {
-			for fingerprint, item := range revisedItemsToAdd {
-				item.OverallState = newState
-				item.OverallStateChanged = true
-				revisedItemsToAdd[fingerprint] = item
-			}
-		}
-		zap.L().Debug("revisedItemsToAdd after newState", zap.String("ruleid", r.ID()), zap.Any("revisedItemsToAdd", revisedItemsToAdd))
-
-	} else {
-		for _, item := range itemsToAdd {
-			revisedItemsToAdd[item.Fingerprint] = item
-		}
-	}
-
-	if len(revisedItemsToAdd) > 0 && r.reader != nil {
-		zap.L().Debug("writing rule state history", zap.String("ruleid", r.ID()), zap.Any("revisedItemsToAdd", revisedItemsToAdd))
-
-		entries := make([]model.RuleStateHistory, 0, len(revisedItemsToAdd))
-		for _, item := range revisedItemsToAdd {
-			entries = append(entries, item)
-		}
-		err := r.reader.AddRuleStateHistory(ctx, entries)
-		if err != nil {
-			zap.L().Error("error while inserting rule state history", zap.Error(err), zap.Any("itemsToAdd", itemsToAdd))
-		}
 	}
 	r.handledRestart = true
 
 	return nil
+}
+
+// TODO(srikanthccv): remove these when v3 is cleaned up
+func toRuleStateHistoryTypes(entries []model.RuleStateHistory) []rulestatehistorytypes.RuleStateHistory {
+	converted := make([]rulestatehistorytypes.RuleStateHistory, 0, len(entries))
+	for _, entry := range entries {
+		converted = append(converted, rulestatehistorytypes.RuleStateHistory{
+			RuleID:              entry.RuleID,
+			RuleName:            entry.RuleName,
+			OverallState:        toRuleStateHistoryAlertState(entry.OverallState),
+			OverallStateChanged: entry.OverallStateChanged,
+			State:               toRuleStateHistoryAlertState(entry.State),
+			StateChanged:        entry.StateChanged,
+			UnixMilli:           entry.UnixMilli,
+			Labels:              rulestatehistorytypes.LabelsString(entry.Labels),
+			Fingerprint:         entry.Fingerprint,
+			Value:               entry.Value,
+		})
+	}
+	return converted
+}
+
+func toRuleStateHistoryAlertState(state model.AlertState) rulestatehistorytypes.AlertState {
+	switch state {
+	case model.StateInactive:
+		return rulestatehistorytypes.StateInactive
+	case model.StatePending:
+		return rulestatehistorytypes.StatePending
+	case model.StateRecovering:
+		return rulestatehistorytypes.StateRecovering
+	case model.StateFiring:
+		return rulestatehistorytypes.StateFiring
+	case model.StateNoData:
+		return rulestatehistorytypes.StateNoData
+	case model.StateDisabled:
+		return rulestatehistorytypes.StateDisabled
+	default:
+		return rulestatehistorytypes.StateInactive
+	}
 }
 
 func (r *BaseRule) PopulateTemporality(ctx context.Context, orgID valuer.UUID, qp *v3.QueryRangeParamsV3) error {
@@ -550,7 +518,7 @@ func (r *BaseRule) PopulateTemporality(ctx context.Context, orgID valuer.UUID, q
 
 // ShouldSkipNewGroups returns true if new group filtering should be applied
 func (r *BaseRule) ShouldSkipNewGroups() bool {
-	return r.newGroupEvalDelay != nil && *r.newGroupEvalDelay > 0
+	return r.newGroupEvalDelay.IsPositive()
 }
 
 // isFilterNewSeriesSupported checks if the query is supported for new series filtering
@@ -740,4 +708,27 @@ func (r *BaseRule) FilterNewSeries(ctx context.Context, ts time.Time, series []*
 	}
 
 	return filteredSeries, nil
+}
+
+// HandleMissingDataAlert handles missing data alert logic by tracking the last timestamp
+// with data points and checking if a missing data alert should be sent based on the
+// [ruletypes.RuleCondition.AlertOnAbsent] and [ruletypes.RuleCondition.AbsentFor] conditions.
+//
+// Returns a pointer to the missing data alert if conditions are met, nil otherwise.
+func (r *BaseRule) HandleMissingDataAlert(ctx context.Context, ts time.Time, hasData bool) *ruletypes.Sample {
+	// Track the last timestamp with data points for missing data alerts
+	if hasData {
+		r.lastTimestampWithDatapoints = ts
+	}
+
+	if !r.ruleCondition.AlertOnAbsent || ts.Before(r.lastTimestampWithDatapoints.Add(time.Duration(r.ruleCondition.AbsentFor)*time.Minute)) {
+		return nil
+	}
+
+	r.logger.InfoContext(ctx, "no data found for rule condition", "rule_id", r.ID())
+	lbls := labels.NewBuilder(labels.Labels{})
+	if !r.lastTimestampWithDatapoints.IsZero() {
+		lbls.Set(ruletypes.LabelLastSeen, r.lastTimestampWithDatapoints.Format(constants.AlertTimeFormat))
+	}
+	return &ruletypes.Sample{Metric: lbls.Labels(), IsMissing: true}
 }

@@ -16,18 +16,16 @@ import {
 } from 'antd';
 import logEvent from 'api/common/logEvent';
 import ConfigureIcon from 'assets/Integrations/ConfigureIcon';
-import HeaderRightSection from 'components/HeaderRightSection/HeaderRightSection';
 import { PANEL_GROUP_TYPES, PANEL_TYPES } from 'constants/queryBuilder';
-import ROUTES from 'constants/routes';
 import { DeleteButton } from 'container/ListOfDashboard/TableComponents/DeleteButton';
 import DateTimeSelectionV2 from 'container/TopNav/DateTimeSelectionV2';
 import { useDashboardVariables } from 'hooks/dashboard/useDashboardVariables';
 import { useGetPublicDashboardMeta } from 'hooks/dashboard/useGetPublicDashboardMeta';
+import { useLockDashboard } from 'hooks/dashboard/useLockDashboard';
 import { useUpdateDashboard } from 'hooks/dashboard/useUpdateDashboard';
 import useComponentPermission from 'hooks/useComponentPermission';
 import { useGetTenantLicense } from 'hooks/useGetTenantLicense';
 import { useNotifications } from 'hooks/useNotifications';
-import { useSafeNavigate } from 'hooks/useSafeNavigate';
 import { isEmpty } from 'lodash-es';
 import {
 	Check,
@@ -37,13 +35,16 @@ import {
 	FolderKanban,
 	Fullscreen,
 	Globe,
-	LayoutGrid,
 	LockKeyhole,
 	PenLine,
 	X,
 } from 'lucide-react';
 import { useAppContext } from 'providers/App/App';
-import { useDashboard } from 'providers/Dashboard/Dashboard';
+import { usePanelTypeSelectionModalStore } from 'providers/Dashboard/helpers/panelTypeSelectionModalHelper';
+import {
+	selectIsDashboardLocked,
+	useDashboardStore,
+} from 'providers/Dashboard/store/useDashboardStore';
 import { sortLayout } from 'providers/Dashboard/util';
 import { DashboardData } from 'types/api/dashboard/getAll';
 import { Props } from 'types/api/dashboard/update';
@@ -51,10 +52,11 @@ import { ROLES, USER_ROLES } from 'types/roles';
 import { ComponentTypes } from 'utils/permission';
 import { v4 as uuid } from 'uuid';
 
-import DashboardGraphSlider from '../ComponentsSlider';
+import DashboardHeader from '../components/DashboardHeader/DashboardHeader';
 import DashboardSettings from '../DashboardSettings';
 import { Base64Icons } from '../DashboardSettings/General/utils';
 import DashboardVariableSelection from '../DashboardVariablesSelection';
+import PanelTypeSelectionModal from '../PanelTypeSelectionModal';
 import SettingsDrawer from './SettingsDrawer';
 import { VariablesSettingsTab } from './types';
 import {
@@ -71,21 +73,21 @@ interface DashboardDescriptionProps {
 
 // eslint-disable-next-line sonarjs/cognitive-complexity
 function DashboardDescription(props: DashboardDescriptionProps): JSX.Element {
-	const { safeNavigate } = useSafeNavigate();
 	const { handle } = props;
+	const setIsPanelTypeSelectionModalOpen = usePanelTypeSelectionModalStore(
+		(s) => s.setIsPanelTypeSelectionModalOpen,
+	);
 	const {
 		selectedDashboard,
 		panelMap,
 		setPanelMap,
 		layouts,
 		setLayouts,
-		isDashboardLocked,
-		listSortOrder,
 		setSelectedDashboard,
-		handleToggleDashboardSlider,
-		setSelectedRowWidgetId,
-		handleDashboardLockToggle,
-	} = useDashboard();
+	} = useDashboardStore();
+
+	const isDashboardLocked = useDashboardStore(selectIsDashboardLocked);
+	const handleDashboardLockToggle = useLockDashboard();
 
 	const variablesSettingsTabHandle = useRef<VariablesSettingsTab>(null);
 	const [isSettingsDrawerOpen, setIsSettingsDrawerOpen] = useState<boolean>(
@@ -151,15 +153,14 @@ function DashboardDescription(props: DashboardDescriptionProps): JSX.Element {
 	const [addPanelPermission] = useComponentPermission(permissions, userRole);
 
 	const onEmptyWidgetHandler = useCallback(() => {
-		setSelectedRowWidgetId(null);
-		handleToggleDashboardSlider(true);
+		setIsPanelTypeSelectionModalOpen(true);
 		logEvent('Dashboard Detail: Add new panel clicked', {
 			dashboardId: selectedDashboard?.id,
 			dashboardName: selectedDashboard?.data.title,
 			numberOfPanels: selectedDashboard?.data.widgets?.length,
 		});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [handleToggleDashboardSlider]);
+	}, [setIsPanelTypeSelectionModalOpen]);
 
 	const handleLockDashboardToggle = (): void => {
 		setIsDashbordSettingsOpen(false);
@@ -276,7 +277,6 @@ function DashboardDescription(props: DashboardDescriptionProps): JSX.Element {
 		};
 
 		updateDashboardMutation.mutate(updatedDashboard, {
-			// eslint-disable-next-line sonarjs/no-identical-functions
 			onSuccess: (updatedDashboard) => {
 				if (updatedDashboard.data) {
 					if (updatedDashboard.data.data.layout) {
@@ -290,17 +290,6 @@ function DashboardDescription(props: DashboardDescriptionProps): JSX.Element {
 				setSectionName(DEFAULT_ROW_NAME);
 			},
 		});
-	}
-
-	function goToListPage(): void {
-		const urlParams = new URLSearchParams();
-		urlParams.set('columnKey', listSortOrder.columnKey as string);
-		urlParams.set('order', listSortOrder.order as string);
-		urlParams.set('page', listSortOrder.pagination as string);
-		urlParams.set('search', listSortOrder.search as string);
-
-		const generatedUrl = `${ROUTES.ALL_DASHBOARD}?${urlParams.toString()}`;
-		safeNavigate(generatedUrl);
 	}
 
 	const {
@@ -351,32 +340,7 @@ function DashboardDescription(props: DashboardDescriptionProps): JSX.Element {
 
 	return (
 		<Card className="dashboard-description-container">
-			<div className="dashboard-header">
-				<section className="dashboard-breadcrumbs">
-					<Button
-						type="text"
-						icon={<LayoutGrid size={14} />}
-						className="dashboard-btn"
-						onClick={(): void => goToListPage()}
-					>
-						Dashboard /
-					</Button>
-					<Button type="text" className="id-btn dashboard-name-btn">
-						<img
-							src={image}
-							alt="dashboard-icon"
-							style={{ height: '14px', width: '14px' }}
-						/>
-						{title}
-					</Button>
-				</section>
-
-				<HeaderRightSection
-					enableAnnouncements={false}
-					enableShare
-					enableFeedback
-				/>
-			</div>
+			<DashboardHeader />
 			<section className="dashboard-details">
 				<div className="left-section">
 					<img src={image} alt="dashboard-img" className="dashboard-img" />
@@ -565,7 +529,7 @@ function DashboardDescription(props: DashboardDescriptionProps): JSX.Element {
 					<DashboardVariableSelection />
 				</section>
 			)}
-			<DashboardGraphSlider />
+			<PanelTypeSelectionModal />
 
 			<Modal
 				open={isRenameDashboardOpen}

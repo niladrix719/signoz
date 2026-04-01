@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -35,9 +36,9 @@ func TestThresholdRuleEvalBackwardCompat(t *testing.T) {
 		AlertName: "Eval Backward Compatibility Test without recovery target",
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
-		Evaluation: &ruletypes.EvaluationEnvelope{ruletypes.RollingEvaluation, ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -72,7 +73,7 @@ func TestThresholdRuleEvalBackwardCompat(t *testing.T) {
 			},
 		}
 
-		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 		if err != nil {
 			assert.NoError(t, err)
 		}
@@ -151,9 +152,9 @@ func TestPrepareLinksToLogs(t *testing.T) {
 		AlertName: "Tricky Condition Tests",
 		AlertType: ruletypes.AlertTypeLogs,
 		RuleType:  ruletypes.RuleTypeThreshold,
-		Evaluation: &ruletypes.EvaluationEnvelope{ruletypes.RollingEvaluation, ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -189,7 +190,7 @@ func TestPrepareLinksToLogs(t *testing.T) {
 			},
 		},
 	}
-	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 	if err != nil {
 		assert.NoError(t, err)
 	}
@@ -205,9 +206,9 @@ func TestPrepareLinksToLogsV5(t *testing.T) {
 		AlertName: "Tricky Condition Tests",
 		AlertType: ruletypes.AlertTypeLogs,
 		RuleType:  ruletypes.RuleTypeThreshold,
-		Evaluation: &ruletypes.EvaluationEnvelope{ruletypes.RollingEvaluation, ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -250,7 +251,7 @@ func TestPrepareLinksToLogsV5(t *testing.T) {
 			},
 		},
 	}
-	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 	if err != nil {
 		assert.NoError(t, err)
 	}
@@ -266,9 +267,9 @@ func TestPrepareLinksToTracesV5(t *testing.T) {
 		AlertName: "Tricky Condition Tests",
 		AlertType: ruletypes.AlertTypeTraces,
 		RuleType:  ruletypes.RuleTypeThreshold,
-		Evaluation: &ruletypes.EvaluationEnvelope{ruletypes.RollingEvaluation, ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -311,7 +312,7 @@ func TestPrepareLinksToTracesV5(t *testing.T) {
 			},
 		},
 	}
-	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 	if err != nil {
 		assert.NoError(t, err)
 	}
@@ -327,9 +328,9 @@ func TestPrepareLinksToTraces(t *testing.T) {
 		AlertName: "Links to traces test",
 		AlertType: ruletypes.AlertTypeTraces,
 		RuleType:  ruletypes.RuleTypeThreshold,
-		Evaluation: &ruletypes.EvaluationEnvelope{ruletypes.RollingEvaluation, ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -365,7 +366,7 @@ func TestPrepareLinksToTraces(t *testing.T) {
 			},
 		},
 	}
-	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 	if err != nil {
 		assert.NoError(t, err)
 	}
@@ -381,9 +382,9 @@ func TestThresholdRuleLabelNormalization(t *testing.T) {
 		AlertName: "Tricky Condition Tests",
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
-		Evaluation: &ruletypes.EvaluationEnvelope{ruletypes.RollingEvaluation, ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -451,7 +452,7 @@ func TestThresholdRuleLabelNormalization(t *testing.T) {
 			},
 		}
 
-		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 		if err != nil {
 			assert.NoError(t, err)
 		}
@@ -490,8 +491,8 @@ func TestThresholdRuleEvalDelay(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -553,8 +554,8 @@ func TestThresholdRuleClickHouseTmpl(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -594,7 +595,7 @@ func TestThresholdRuleClickHouseTmpl(t *testing.T) {
 	logger := instrumentationtest.New().Logger()
 
 	for idx, c := range cases {
-		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 		if err != nil {
 			assert.NoError(t, err)
 		}
@@ -615,8 +616,8 @@ func TestThresholdRuleUnitCombinations(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -778,7 +779,7 @@ func TestThresholdRuleUnitCombinations(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
-		reader := clickhouseReader.NewReader(nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{}, telemetryStore), "", time.Duration(time.Second), nil, readerCache, options)
+		reader := clickhouseReader.NewReader(slog.Default(), nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{Timeout: 2 * time.Minute}, telemetryStore), "", time.Duration(time.Second), nil, readerCache, options)
 		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, reader, nil, logger)
 		rule.TemporalityMap = map[string]map[v3.Temporality]bool{
 			"signoz_calls_total": {
@@ -816,8 +817,8 @@ func TestThresholdRuleNoData(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -893,7 +894,7 @@ func TestThresholdRuleNoData(t *testing.T) {
 		)
 		assert.NoError(t, err)
 		options := clickhouseReader.NewOptions("", "", "archiveNamespace")
-		reader := clickhouseReader.NewReader(nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{}, telemetryStore), "", time.Duration(time.Second), nil, readerCache, options)
+		reader := clickhouseReader.NewReader(slog.Default(), nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{Timeout: 2 * time.Minute}, telemetryStore), "", time.Duration(time.Second), nil, readerCache, options)
 
 		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, reader, nil, logger)
 		rule.TemporalityMap = map[string]map[v3.Temporality]bool{
@@ -927,8 +928,8 @@ func TestThresholdRuleTracesLink(t *testing.T) {
 		AlertType: ruletypes.AlertTypeTraces,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -1013,7 +1014,7 @@ func TestThresholdRuleTracesLink(t *testing.T) {
 		}
 
 		options := clickhouseReader.NewOptions("", "", "archiveNamespace")
-		reader := clickhouseReader.NewReader(nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{}, telemetryStore), "", time.Duration(time.Second), nil, nil, options)
+		reader := clickhouseReader.NewReader(slog.Default(), nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{Timeout: 2 * time.Minute}, telemetryStore), "", time.Duration(time.Second), nil, nil, options)
 
 		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, reader, nil, logger)
 		rule.TemporalityMap = map[string]map[v3.Temporality]bool{
@@ -1052,8 +1053,8 @@ func TestThresholdRuleLogsLink(t *testing.T) {
 		AlertType: ruletypes.AlertTypeLogs,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -1150,7 +1151,7 @@ func TestThresholdRuleLogsLink(t *testing.T) {
 		}
 
 		options := clickhouseReader.NewOptions("", "", "archiveNamespace")
-		reader := clickhouseReader.NewReader(nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{}, telemetryStore), "", time.Duration(time.Second), nil, nil, options)
+		reader := clickhouseReader.NewReader(slog.Default(), nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{Timeout: 2 * time.Minute}, telemetryStore), "", time.Duration(time.Second), nil, nil, options)
 
 		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, reader, nil, logger)
 		rule.TemporalityMap = map[string]map[v3.Temporality]bool{
@@ -1190,8 +1191,8 @@ func TestThresholdRuleShiftBy(t *testing.T) {
 		AlertType: ruletypes.AlertTypeLogs,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			Thresholds: &ruletypes.RuleThresholdData{
@@ -1264,8 +1265,8 @@ func TestMultipleThresholdRule(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -1417,7 +1418,7 @@ func TestMultipleThresholdRule(t *testing.T) {
 			},
 		)
 		require.NoError(t, err)
-		reader := clickhouseReader.NewReader(nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{}, telemetryStore), "", time.Second, nil, readerCache, options)
+		reader := clickhouseReader.NewReader(slog.Default(), nil, telemetryStore, prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{Timeout: 2 * time.Minute}, telemetryStore), "", time.Second, nil, readerCache, options)
 		rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, reader, nil, logger)
 		rule.TemporalityMap = map[string]map[v3.Temporality]bool{
 			"signoz_calls_total": {
@@ -1455,8 +1456,8 @@ func TestThresholdRuleEval_BasicCases(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -1486,8 +1487,8 @@ func TestThresholdRuleEval_MatchPlusCompareOps(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -1523,8 +1524,8 @@ func TestThresholdRuleEval_SendUnmatchedBypassesRecovery(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -1559,7 +1560,7 @@ func TestThresholdRuleEval_SendUnmatchedBypassesRecovery(t *testing.T) {
 	}
 
 	logger := instrumentationtest.New().Logger()
-	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+	rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 	require.NoError(t, err)
 
 	now := time.Now()
@@ -1611,8 +1612,8 @@ func TestThresholdRuleEval_SendUnmatchedVariants(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -1735,8 +1736,8 @@ func TestThresholdRuleEval_RecoveryNotMetSendUnmatchedFalse(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -1820,7 +1821,7 @@ func runEvalTests(t *testing.T, postableRule ruletypes.PostableRule, testCases [
 				Spec: thresholds,
 			}
 
-			rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+			rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -1927,7 +1928,7 @@ func runMultiThresholdEvalTests(t *testing.T, postableRule ruletypes.PostableRul
 				Spec: thresholds,
 			}
 
-			rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(2*time.Minute))
+			rule, err := NewThresholdRule("69", valuer.GenerateUUID(), &postableRule, nil, nil, logger, WithEvalDelay(valuer.MustParseTextDuration("2m")))
 			if err != nil {
 				assert.NoError(t, err)
 				return
@@ -2035,8 +2036,8 @@ func TestThresholdRuleEval_MultiThreshold(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompositeQuery: &v3.CompositeQuery{
@@ -2066,8 +2067,8 @@ func TestThresholdEval_RequireMinPoints(t *testing.T) {
 		AlertType: ruletypes.AlertTypeMetric,
 		RuleType:  ruletypes.RuleTypeThreshold,
 		Evaluation: &ruletypes.EvaluationEnvelope{Kind: ruletypes.RollingEvaluation, Spec: ruletypes.RollingWindow{
-			EvalWindow: ruletypes.Duration(5 * time.Minute),
-			Frequency:  ruletypes.Duration(1 * time.Minute),
+			EvalWindow: valuer.MustParseTextDuration("5m"),
+			Frequency:  valuer.MustParseTextDuration("1m"),
 		}},
 		RuleCondition: &ruletypes.RuleCondition{
 			CompareOp: ruletypes.ValueIsAbove,
@@ -2219,8 +2220,8 @@ func TestThresholdEval_RequireMinPoints(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			prometheusProvider := prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{}, telemetryStore)
-			reader := clickhouseReader.NewReader(nil, telemetryStore, prometheusProvider, "", time.Second, nil, readerCache, options)
+			prometheusProvider := prometheustest.New(context.Background(), instrumentationtest.New().ToProviderSettings(), prometheus.Config{Timeout: 2 * time.Minute}, telemetryStore)
+			reader := clickhouseReader.NewReader(slog.Default(), nil, telemetryStore, prometheusProvider, "", time.Second, nil, readerCache, options)
 
 			rule, err := NewThresholdRule("some-id", valuer.GenerateUUID(), &postableRule, reader, nil, logger)
 			t.Run(fmt.Sprintf("%d Version=%s, %s", idx, version, c.description), func(t *testing.T) {

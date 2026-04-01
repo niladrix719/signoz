@@ -54,7 +54,7 @@ func NewTraceQueryStatementBuilder(
 	}
 }
 
-// Build builds a SQL query for traces based on the given parameters
+// Build builds a SQL query for traces based on the given parameters.
 func (b *traceQueryStatementBuilder) Build(
 	ctx context.Context,
 	start uint64,
@@ -74,24 +74,42 @@ func (b *traceQueryStatementBuilder) Build(
 		return nil, err
 	}
 
-	query = b.adjustKeys(ctx, keys, query, requestType)
+	/*
+		Adding a tech debt note here:
+		This piece of code is a hot fix and should be removed once we close issue: engineering-pod/issues/3622
+	*/
+	/*
+		-------------------------------- Start of tech debt ----------------------------
+	*/
+	if requestType == qbtypes.RequestTypeRaw {
 
-	// Check if filter contains trace_id(s) and optimize time range if needed
-	if query.Filter != nil && query.Filter.Expression != "" && b.telemetryStore != nil {
-		traceIDs, found := ExtractTraceIDsFromFilter(query.Filter.Expression)
-		if found && len(traceIDs) > 0 {
-			finder := NewTraceTimeRangeFinder(b.telemetryStore)
+		selectedFields := query.SelectFields
 
-			traceStart, traceEnd, ok := finder.GetTraceTimeRangeMulti(ctx, traceIDs)
-			if !ok {
-				b.logger.DebugContext(ctx, "failed to get trace time range", "trace_ids", traceIDs)
-			} else if traceStart > 0 && traceEnd > 0 {
-				start = uint64(traceStart)
-				end = uint64(traceEnd)
-				b.logger.DebugContext(ctx, "optimized time range for traces", "trace_ids", traceIDs, "start", start, "end", end)
+		if len(selectedFields) == 0 {
+			sortedKeys := maps.Keys(DefaultFields)
+			slices.Sort(sortedKeys)
+			for _, key := range sortedKeys {
+				selectedFields = append(selectedFields, DefaultFields[key])
+			}
+			query.SelectFields = selectedFields
+		}
+
+		selectFieldKeys := []string{}
+		for _, field := range selectedFields {
+			selectFieldKeys = append(selectFieldKeys, field.Name)
+		}
+
+		for _, x := range []string{"timestamp", "span_id", "trace_id"} {
+			if !slices.Contains(selectFieldKeys, x) {
+				query.SelectFields = append(query.SelectFields, DefaultFields[x])
 			}
 		}
 	}
+	/*
+		-------------------------------- End of tech debt ----------------------------
+	*/
+
+	query = b.adjustKeys(ctx, keys, query, requestType)
 
 	// Create SQL builder
 	q := sqlbuilder.NewSelectBuilder()
@@ -167,19 +185,13 @@ func (b *traceQueryStatementBuilder) adjustKeys(ctx context.Context, keys map[st
 	// 1. to not fail filter expression that use deprecated cols
 	// 2. this could have been moved to metadata fetching itself, however, that
 	// would mean, they also show up in suggestions we we don't want to do
+	// 3. reason for not doing a simple append is to keep intrinsic/calculated field first so that it gets
+	// priority in multi_if sql expression
 	for fieldKeyName, fieldKey := range IntrinsicFieldsDeprecated {
-		if _, ok := keys[fieldKeyName]; !ok {
-			keys[fieldKeyName] = []*telemetrytypes.TelemetryFieldKey{&fieldKey}
-		} else {
-			keys[fieldKeyName] = append(keys[fieldKeyName], &fieldKey)
-		}
+		keys[fieldKeyName] = append([]*telemetrytypes.TelemetryFieldKey{&fieldKey}, keys[fieldKeyName]...)
 	}
 	for fieldKeyName, fieldKey := range CalculatedFieldsDeprecated {
-		if _, ok := keys[fieldKeyName]; !ok {
-			keys[fieldKeyName] = []*telemetrytypes.TelemetryFieldKey{&fieldKey}
-		} else {
-			keys[fieldKeyName] = append(keys[fieldKeyName], &fieldKey)
-		}
+		keys[fieldKeyName] = append([]*telemetrytypes.TelemetryFieldKey{&fieldKey}, keys[fieldKeyName]...)
 	}
 
 	// Adjust keys for alias expressions in aggregations
@@ -220,7 +232,7 @@ func (b *traceQueryStatementBuilder) adjustKeys(ctx context.Context, keys map[st
 
 	for _, action := range actions {
 		// TODO: change to debug level once we are confident about the behavior
-		b.logger.InfoContext(ctx, "key adjustment action", "action", action)
+		b.logger.InfoContext(ctx, "key adjustment action", slog.String("action", action))
 	}
 
 	return query
@@ -260,7 +272,7 @@ func (b *traceQueryStatementBuilder) adjustKey(key *telemetrytypes.TelemetryFiel
 	return actions
 }
 
-// buildListQuery builds a query for list panel type
+// buildListQuery builds a query for list panel type.
 func (b *traceQueryStatementBuilder) buildListQuery(
 	ctx context.Context,
 	sb *sqlbuilder.SelectBuilder,
@@ -282,30 +294,9 @@ func (b *traceQueryStatementBuilder) buildListQuery(
 		cteArgs = append(cteArgs, args)
 	}
 
-	selectedFields := query.SelectFields
-
-	if len(selectedFields) == 0 {
-		sortedKeys := maps.Keys(DefaultFields)
-		slices.Sort(sortedKeys)
-		for _, key := range sortedKeys {
-			selectedFields = append(selectedFields, DefaultFields[key])
-		}
-	}
-
-	selectFieldKeys := []string{}
-	for _, field := range selectedFields {
-		selectFieldKeys = append(selectFieldKeys, field.Name)
-	}
-
-	for _, x := range []string{"timestamp", "span_id", "trace_id"} {
-		if !slices.Contains(selectFieldKeys, x) {
-			selectedFields = append(selectedFields, DefaultFields[x])
-		}
-	}
-
 	// TODO: should we deprecate `SelectFields` and return everything from a span like we do for logs?
-	for _, field := range selectedFields {
-		colExpr, err := b.fm.ColumnExpressionFor(ctx, &field, keys)
+	for _, field := range query.SelectFields {
+		colExpr, err := b.fm.ColumnExpressionFor(ctx, start, end, &field, keys)
 		if err != nil {
 			return nil, err
 		}
@@ -323,7 +314,7 @@ func (b *traceQueryStatementBuilder) buildListQuery(
 
 	// Add order by
 	for _, orderBy := range query.Order {
-		colExpr, err := b.fm.ColumnExpressionFor(ctx, &orderBy.Key.TelemetryFieldKey, keys)
+		colExpr, err := b.fm.ColumnExpressionFor(ctx, start, end, &orderBy.Key.TelemetryFieldKey, keys)
 		if err != nil {
 			return nil, err
 		}
@@ -507,21 +498,21 @@ func (b *traceQueryStatementBuilder) buildTimeSeriesQuery(
 	// Keep original column expressions so we can build the tuple
 	fieldNames := make([]string, 0, len(query.GroupBy))
 	for _, gb := range query.GroupBy {
-		expr, args, err := querybuilder.CollisionHandledFinalExpr(ctx, &gb.TelemetryFieldKey, b.fm, b.cb, keys, telemetrytypes.FieldDataTypeString, nil)
+		expr, args, err := querybuilder.CollisionHandledFinalExpr(ctx, start, end, &gb.TelemetryFieldKey, b.fm, b.cb, keys, telemetrytypes.FieldDataTypeString, nil)
 		if err != nil {
 			return nil, err
 		}
-		colExpr := fmt.Sprintf("toString(%s) AS `%s`", expr, gb.TelemetryFieldKey.Name)
+		colExpr := fmt.Sprintf("toString(%s) AS `%s`", expr, gb.Name)
 		allGroupByArgs = append(allGroupByArgs, args...)
 		sb.SelectMore(colExpr)
-		fieldNames = append(fieldNames, fmt.Sprintf("`%s`", gb.TelemetryFieldKey.Name))
+		fieldNames = append(fieldNames, fmt.Sprintf("`%s`", gb.Name))
 	}
 
 	// Aggregations
 	allAggChArgs := make([]any, 0)
 	for i, agg := range query.Aggregations {
 		rewritten, chArgs, err := b.aggExprRewriter.Rewrite(
-			ctx, agg.Expression,
+			ctx, start, end, agg.Expression,
 			uint64(query.StepInterval.Seconds()),
 			keys,
 		)
@@ -621,7 +612,7 @@ func (b *traceQueryStatementBuilder) buildTimeSeriesQuery(
 	return stmt, nil
 }
 
-// buildScalarQuery builds a query for scalar panel type
+// buildScalarQuery builds a query for scalar panel type.
 func (b *traceQueryStatementBuilder) buildScalarQuery(
 	ctx context.Context,
 	sb *sqlbuilder.SelectBuilder,
@@ -649,11 +640,11 @@ func (b *traceQueryStatementBuilder) buildScalarQuery(
 
 	var allGroupByArgs []any
 	for _, gb := range query.GroupBy {
-		expr, args, err := querybuilder.CollisionHandledFinalExpr(ctx, &gb.TelemetryFieldKey, b.fm, b.cb, keys, telemetrytypes.FieldDataTypeString, nil)
+		expr, args, err := querybuilder.CollisionHandledFinalExpr(ctx, start, end, &gb.TelemetryFieldKey, b.fm, b.cb, keys, telemetrytypes.FieldDataTypeString, nil)
 		if err != nil {
 			return nil, err
 		}
-		colExpr := fmt.Sprintf("toString(%s) AS `%s`", expr, gb.TelemetryFieldKey.Name)
+		colExpr := fmt.Sprintf("toString(%s) AS `%s`", expr, gb.Name)
 		allGroupByArgs = append(allGroupByArgs, args...)
 		sb.SelectMore(colExpr)
 	}
@@ -666,7 +657,7 @@ func (b *traceQueryStatementBuilder) buildScalarQuery(
 		for idx := range query.Aggregations {
 			aggExpr := query.Aggregations[idx]
 			rewritten, chArgs, err := b.aggExprRewriter.Rewrite(
-				ctx, aggExpr.Expression,
+				ctx, start, end, aggExpr.Expression,
 				rateInterval,
 				keys,
 			)
@@ -736,9 +727,9 @@ func (b *traceQueryStatementBuilder) buildScalarQuery(
 	return stmt, nil
 }
 
-// buildFilterCondition builds SQL condition from filter expression
+// buildFilterCondition builds SQL condition from filter expression.
 func (b *traceQueryStatementBuilder) addFilterCondition(
-	_ context.Context,
+	ctx context.Context,
 	sb *sqlbuilder.SelectBuilder,
 	start, end uint64,
 	query qbtypes.QueryBuilderQuery[qbtypes.TraceAggregation],
@@ -752,13 +743,16 @@ func (b *traceQueryStatementBuilder) addFilterCondition(
 	if query.Filter != nil && query.Filter.Expression != "" {
 		// add filter expression
 		preparedWhereClause, err = querybuilder.PrepareWhereClause(query.Filter.Expression, querybuilder.FilterExprVisitorOpts{
+			Context:            ctx,
 			Logger:             b.logger,
 			FieldMapper:        b.fm,
 			ConditionBuilder:   b.cb,
 			FieldKeys:          keys,
 			SkipResourceFilter: true,
 			Variables:          variables,
-		}, start, end)
+			StartNs:            start,
+			EndNs:              end,
+		})
 
 		if err != nil {
 			return nil, err

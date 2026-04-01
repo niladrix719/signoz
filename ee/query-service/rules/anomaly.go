@@ -12,10 +12,11 @@ import (
 
 	"github.com/SigNoz/signoz/ee/query-service/anomaly"
 	"github.com/SigNoz/signoz/pkg/cache"
+	"github.com/SigNoz/signoz/pkg/errors"
 	"github.com/SigNoz/signoz/pkg/query-service/common"
 	"github.com/SigNoz/signoz/pkg/query-service/model"
 	"github.com/SigNoz/signoz/pkg/transition"
-	ruletypes "github.com/SigNoz/signoz/pkg/types/ruletypes"
+	"github.com/SigNoz/signoz/pkg/types/ruletypes"
 	"github.com/SigNoz/signoz/pkg/valuer"
 
 	querierV2 "github.com/SigNoz/signoz/pkg/query-service/app/querier/v2"
@@ -26,7 +27,7 @@ import (
 	"github.com/SigNoz/signoz/pkg/query-service/utils/times"
 	"github.com/SigNoz/signoz/pkg/query-service/utils/timestamp"
 
-	"github.com/SigNoz/signoz/pkg/query-service/formatter"
+	"github.com/SigNoz/signoz/pkg/units"
 
 	baserules "github.com/SigNoz/signoz/pkg/query-service/rules"
 
@@ -62,6 +63,8 @@ type AnomalyRule struct {
 
 	seasonality anomaly.Seasonality
 }
+
+var _ baserules.Rule = (*AnomalyRule)(nil)
 
 func NewAnomalyRule(
 	id string,
@@ -234,6 +237,11 @@ func (r *AnomalyRule) buildAndRunQuery(ctx context.Context, orgID valuer.UUID, t
 		}
 	}
 
+	hasData := len(queryResult.AnomalyScores) > 0
+	if missingDataAlert := r.HandleMissingDataAlert(ctx, ts, hasData); missingDataAlert != nil {
+		return ruletypes.Vector{*missingDataAlert}, nil
+	}
+
 	var resultVector ruletypes.Vector
 
 	scoresJSON, _ := json.Marshal(queryResult.AnomalyScores)
@@ -285,6 +293,11 @@ func (r *AnomalyRule) buildAndRunQueryV5(ctx context.Context, orgID valuer.UUID,
 
 	queryResult := transition.ConvertV5TimeSeriesDataToV4Result(qbResult)
 
+	hasData := len(queryResult.AnomalyScores) > 0
+	if missingDataAlert := r.HandleMissingDataAlert(ctx, ts, hasData); missingDataAlert != nil {
+		return ruletypes.Vector{*missingDataAlert}, nil
+	}
+
 	var resultVector ruletypes.Vector
 
 	scoresJSON, _ := json.Marshal(queryResult.AnomalyScores)
@@ -296,7 +309,7 @@ func (r *AnomalyRule) buildAndRunQueryV5(ctx context.Context, orgID valuer.UUID,
 		filteredSeries, filterErr := r.BaseRule.FilterNewSeries(ctx, ts, seriesToProcess)
 		// In case of error we log the error and continue with the original series
 		if filterErr != nil {
-			r.logger.ErrorContext(ctx, "Error filtering new series, ", "error", filterErr, "rule_name", r.Name())
+			r.logger.ErrorContext(ctx, "Error filtering new series, ", errors.Attr(filterErr), "rule_name", r.Name())
 		} else {
 			seriesToProcess = filteredSeries
 		}
@@ -323,7 +336,7 @@ func (r *AnomalyRule) Eval(ctx context.Context, ts time.Time) (int, error) {
 
 	prevState := r.State()
 
-	valueFormatter := formatter.FromUnit(r.Unit())
+	valueFormatter := units.FormatterFromUnit(r.Unit())
 
 	var res ruletypes.Vector
 	var err error
@@ -379,7 +392,7 @@ func (r *AnomalyRule) Eval(ctx context.Context, ts time.Time) (int, error) {
 			result, err := tmpl.Expand()
 			if err != nil {
 				result = fmt.Sprintf("<error expanding template: %s>", err)
-				r.logger.ErrorContext(ctx, "Expanding alert template failed", "error", err, "data", tmplData, "rule_name", r.Name())
+				r.logger.ErrorContext(ctx, "Expanding alert template failed", errors.Attr(err), "data", tmplData, "rule_name", r.Name())
 			}
 			return result
 		}
@@ -455,7 +468,7 @@ func (r *AnomalyRule) Eval(ctx context.Context, ts time.Time) (int, error) {
 	for fp, a := range r.Active {
 		labelsJSON, err := json.Marshal(a.QueryResultLables)
 		if err != nil {
-			r.logger.ErrorContext(ctx, "error marshaling labels", "error", err, "labels", a.Labels)
+			r.logger.ErrorContext(ctx, "error marshaling labels", errors.Attr(err), "labels", a.Labels)
 		}
 		if _, ok := resultFPs[fp]; !ok {
 			// If the alert was previously firing, keep it around for a given
@@ -480,7 +493,7 @@ func (r *AnomalyRule) Eval(ctx context.Context, ts time.Time) (int, error) {
 			continue
 		}
 
-		if a.State == model.StatePending && ts.Sub(a.ActiveAt) >= r.HoldDuration() {
+		if a.State == model.StatePending && ts.Sub(a.ActiveAt) >= r.HoldDuration().Duration() {
 			a.State = model.StateFiring
 			a.FiredAt = ts
 			state := model.StateFiring
@@ -543,7 +556,7 @@ func (r *AnomalyRule) String() string {
 	ar := ruletypes.PostableRule{
 		AlertName:         r.Name(),
 		RuleCondition:     r.Condition(),
-		EvalWindow:        ruletypes.Duration(r.EvalWindow()),
+		EvalWindow:        r.EvalWindow(),
 		Labels:            r.Labels().Map(),
 		Annotations:       r.Annotations().Map(),
 		PreferredChannels: r.PreferredChannels(),

@@ -11,14 +11,14 @@ import (
 	"github.com/SigNoz/signoz/pkg/modules/dashboard"
 	pkgimpldashboard "github.com/SigNoz/signoz/pkg/modules/dashboard/impldashboard"
 	"github.com/SigNoz/signoz/pkg/modules/organization"
-	"github.com/SigNoz/signoz/pkg/modules/role"
 	"github.com/SigNoz/signoz/pkg/querier"
 	"github.com/SigNoz/signoz/pkg/queryparser"
 	"github.com/SigNoz/signoz/pkg/types"
 	"github.com/SigNoz/signoz/pkg/types/authtypes"
+	"github.com/SigNoz/signoz/pkg/types/ctxtypes"
 	"github.com/SigNoz/signoz/pkg/types/dashboardtypes"
+	"github.com/SigNoz/signoz/pkg/types/instrumentationtypes"
 	"github.com/SigNoz/signoz/pkg/types/querybuildertypes/querybuildertypesv5"
-	"github.com/SigNoz/signoz/pkg/types/roletypes"
 	"github.com/SigNoz/signoz/pkg/valuer"
 )
 
@@ -26,13 +26,11 @@ type module struct {
 	pkgDashboardModule dashboard.Module
 	store              dashboardtypes.Store
 	settings           factory.ScopedProviderSettings
-	roleSetter         role.Setter
-	granter            role.Granter
 	querier            querier.Querier
 	licensing          licensing.Licensing
 }
 
-func NewModule(store dashboardtypes.Store, settings factory.ProviderSettings, analytics analytics.Analytics, orgGetter organization.Getter, roleSetter role.Setter, granter role.Granter, queryParser queryparser.QueryParser, querier querier.Querier, licensing licensing.Licensing) dashboard.Module {
+func NewModule(store dashboardtypes.Store, settings factory.ProviderSettings, analytics analytics.Analytics, orgGetter organization.Getter, queryParser queryparser.QueryParser, querier querier.Querier, licensing licensing.Licensing) dashboard.Module {
 	scopedProviderSettings := factory.NewScopedProviderSettings(settings, "github.com/SigNoz/signoz/ee/modules/dashboard/impldashboard")
 	pkgDashboardModule := pkgimpldashboard.NewModule(store, settings, analytics, orgGetter, queryParser)
 
@@ -40,8 +38,6 @@ func NewModule(store dashboardtypes.Store, settings factory.ProviderSettings, an
 		pkgDashboardModule: pkgDashboardModule,
 		store:              store,
 		settings:           scopedProviderSettings,
-		roleSetter:         roleSetter,
-		granter:            granter,
 		querier:            querier,
 		licensing:          licensing,
 	}
@@ -59,29 +55,6 @@ func (module *module) CreatePublic(ctx context.Context, orgID valuer.UUID, publi
 	}
 	if storablePublicDashboard != nil {
 		return errors.Newf(errors.TypeAlreadyExists, dashboardtypes.ErrCodePublicDashboardAlreadyExists, "dashboard with id %s is already public", storablePublicDashboard.DashboardID)
-	}
-
-	role, err := module.roleSetter.GetOrCreate(ctx, orgID, roletypes.NewRole(roletypes.SigNozAnonymousRoleName, roletypes.SigNozAnonymousRoleDescription, roletypes.RoleTypeManaged, orgID))
-	if err != nil {
-		return err
-	}
-
-	err = module.granter.Grant(ctx, orgID, roletypes.SigNozAnonymousRoleName, authtypes.MustNewSubject(authtypes.TypeableAnonymous, authtypes.AnonymousUser.StringValue(), orgID, nil))
-	if err != nil {
-		return err
-	}
-
-	additionObject := authtypes.MustNewObject(
-		authtypes.Resource{
-			Name: dashboardtypes.TypeableMetaResourcePublicDashboard.Name(),
-			Type: authtypes.TypeMetaResource,
-		},
-		authtypes.MustNewSelector(authtypes.TypeMetaResource, publicDashboard.ID.String()),
-	)
-
-	err = module.roleSetter.PatchObjects(ctx, orgID, role.ID, authtypes.RelationRead, []*authtypes.Object{additionObject}, nil)
-	if err != nil {
-		return err
 	}
 
 	err = module.store.CreatePublic(ctx, dashboardtypes.NewStorablePublicDashboardFromPublicDashboard(publicDashboard))
@@ -128,10 +101,15 @@ func (module *module) GetPublicDashboardSelectorsAndOrg(ctx context.Context, id 
 
 	return []authtypes.Selector{
 		authtypes.MustNewSelector(authtypes.TypeMetaResource, id.StringValue()),
+		authtypes.MustNewSelector(authtypes.TypeMetaResource, authtypes.WildCardSelectorString),
 	}, storableDashboard.OrgID, nil
 }
 
 func (module *module) GetPublicWidgetQueryRange(ctx context.Context, id valuer.UUID, widgetIdx, startTime, endTime uint64) (*querybuildertypesv5.QueryRangeResponse, error) {
+	ctx = ctxtypes.NewContextWithCommentVals(ctx, map[string]string{
+		instrumentationtypes.CodeNamespace:    "dashboard",
+		instrumentationtypes.CodeFunctionName: "GetPublicWidgetQueryRange",
+	})
 	dashboard, err := module.GetDashboardByPublicID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -190,29 +168,6 @@ func (module *module) DeletePublic(ctx context.Context, orgID valuer.UUID, dashb
 		return errors.New(errors.TypeLicenseUnavailable, errors.CodeLicenseUnavailable, "a valid license is not available").WithAdditional("this feature requires a valid license").WithAdditional(err.Error())
 	}
 
-	publicDashboard, err := module.GetPublic(ctx, orgID, dashboardID)
-	if err != nil {
-		return err
-	}
-
-	role, err := module.roleSetter.GetOrCreate(ctx, orgID, roletypes.NewRole(roletypes.SigNozAnonymousRoleName, roletypes.SigNozAnonymousRoleDescription, roletypes.RoleTypeManaged, orgID))
-	if err != nil {
-		return err
-	}
-
-	deletionObject := authtypes.MustNewObject(
-		authtypes.Resource{
-			Name: dashboardtypes.TypeableMetaResourcePublicDashboard.Name(),
-			Type: authtypes.TypeMetaResource,
-		},
-		authtypes.MustNewSelector(authtypes.TypeMetaResource, publicDashboard.ID.String()),
-	)
-
-	err = module.roleSetter.PatchObjects(ctx, orgID, role.ID, authtypes.RelationRead, nil, []*authtypes.Object{deletionObject})
-	if err != nil {
-		return err
-	}
-
 	err = module.store.DeletePublic(ctx, dashboardID.StringValue())
 	if err != nil {
 		return err
@@ -250,10 +205,6 @@ func (module *module) GetByMetricNames(ctx context.Context, orgID valuer.UUID, m
 	return module.pkgDashboardModule.GetByMetricNames(ctx, orgID, metricNames)
 }
 
-func (module *module) MustGetTypeables() []authtypes.Typeable {
-	return module.pkgDashboardModule.MustGetTypeables()
-}
-
 func (module *module) List(ctx context.Context, orgID valuer.UUID) ([]*dashboardtypes.Dashboard, error) {
 	return module.pkgDashboardModule.List(ctx, orgID)
 }
@@ -262,38 +213,32 @@ func (module *module) Update(ctx context.Context, orgID valuer.UUID, id valuer.U
 	return module.pkgDashboardModule.Update(ctx, orgID, id, updatedBy, data, diff)
 }
 
-func (module *module) LockUnlock(ctx context.Context, orgID valuer.UUID, id valuer.UUID, updatedBy string, role types.Role, lock bool) error {
-	return module.pkgDashboardModule.LockUnlock(ctx, orgID, id, updatedBy, role, lock)
+func (module *module) LockUnlock(ctx context.Context, orgID valuer.UUID, id valuer.UUID, updatedBy string, isAdmin bool, lock bool) error {
+	return module.pkgDashboardModule.LockUnlock(ctx, orgID, id, updatedBy, isAdmin, lock)
 }
 
-func (module *module) deletePublic(ctx context.Context, orgID valuer.UUID, dashboardID valuer.UUID) error {
-	publicDashboard, err := module.store.GetPublic(ctx, dashboardID.String())
-	if err != nil {
-		return err
-	}
+func (module *module) MustGetTypeables() []authtypes.Typeable {
+	return module.pkgDashboardModule.MustGetTypeables()
+}
 
-	role, err := module.roleSetter.GetOrCreate(ctx, orgID, roletypes.NewRole(roletypes.SigNozAnonymousRoleName, roletypes.SigNozAnonymousRoleDescription, roletypes.RoleTypeManaged, orgID))
-	if err != nil {
-		return err
-	}
-
-	deletionObject := authtypes.MustNewObject(
-		authtypes.Resource{
-			Name: dashboardtypes.TypeableMetaResourcePublicDashboard.Name(),
-			Type: authtypes.TypeMetaResource,
+func (module *module) MustGetManagedRoleTransactions() map[string][]*authtypes.Transaction {
+	return map[string][]*authtypes.Transaction{
+		authtypes.SigNozAnonymousRoleName: {
+			{
+				ID:       valuer.GenerateUUID(),
+				Relation: authtypes.RelationRead,
+				Object: *authtypes.MustNewObject(
+					authtypes.Resource{
+						Type: authtypes.TypeMetaResource,
+						Name: dashboardtypes.TypeableMetaResourcePublicDashboard.Name(),
+					},
+					authtypes.MustNewSelector(authtypes.TypeMetaResource, "*"),
+				),
+			},
 		},
-		authtypes.MustNewSelector(authtypes.TypeMetaResource, publicDashboard.ID.String()),
-	)
-
-	err = module.roleSetter.PatchObjects(ctx, orgID, role.ID, authtypes.RelationRead, nil, []*authtypes.Object{deletionObject})
-	if err != nil {
-		return err
 	}
+}
 
-	err = module.store.DeletePublic(ctx, dashboardID.StringValue())
-	if err != nil {
-		return err
-	}
-
-	return nil
+func (module *module) deletePublic(ctx context.Context, _ valuer.UUID, dashboardID valuer.UUID) error {
+	return module.store.DeletePublic(ctx, dashboardID.StringValue())
 }

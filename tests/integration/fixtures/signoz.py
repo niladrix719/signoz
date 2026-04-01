@@ -2,6 +2,7 @@ import platform
 import time
 from http import HTTPStatus
 from os import path
+from typing import Optional
 
 import docker
 import docker.errors
@@ -16,8 +17,7 @@ from fixtures.logger import setup_logger
 logger = setup_logger(__name__)
 
 
-@pytest.fixture(name="signoz", scope="package")
-def signoz(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+def create_signoz(
     network: Network,
     zeus: types.TestContainerDocker,
     gateway: types.TestContainerDocker,
@@ -25,9 +25,12 @@ def signoz(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     clickhouse: types.TestContainerClickhouse,
     request: pytest.FixtureRequest,
     pytestconfig: pytest.Config,
+    cache_key: str = "signoz",
+    env_overrides: Optional[dict] = None,
 ) -> types.SigNoz:
     """
-    Package-scoped fixture for setting up SigNoz.
+    Factory function for creating a SigNoz container.
+    Accepts optional env_overrides to customize the container environment.
     """
 
     def create() -> types.SigNoz:
@@ -69,6 +72,10 @@ def signoz(  # pylint: disable=too-many-arguments,too-many-positional-arguments
                 "SIGNOZ_GLOBAL_INGESTION__URL": "https://ingest.test.signoz.cloud",
                 "SIGNOZ_USER_PASSWORD_RESET_ALLOW__SELF": True,
                 "SIGNOZ_USER_PASSWORD_RESET_MAX__TOKEN__LIFETIME": "6h",
+                "RULES_EVAL_DELAY": "0s",
+                "SIGNOZ_ALERTMANAGER_SIGNOZ_POLL__INTERVAL": "5s",
+                "SIGNOZ_ALERTMANAGER_SIGNOZ_ROUTE_GROUP__WAIT": "1s",
+                "SIGNOZ_ALERTMANAGER_SIGNOZ_ROUTE_GROUP__INTERVAL": "5s",
             }
             | sqlstore.env
             | clickhouse.env
@@ -76,6 +83,9 @@ def signoz(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
         if with_web:
             env["SIGNOZ_WEB_ENABLED"] = True
+
+        if env_overrides:
+            env = env | env_overrides
 
         container = DockerContainer("signoz:integration")
         for k, v in env.items():
@@ -98,16 +108,24 @@ def signoz(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             for attempt in range(10):
                 try:
                     response = requests.get(
-                        f"http://{container.get_container_host_ip()}:{container.get_exposed_port(8080)}/api/v1/health",
+                        f"http://{container.get_container_host_ip()}:{container.get_exposed_port(8080)}/api/v2/healthz",
                         timeout=2,
                     )
                     if response.status_code == HTTPStatus.OK:
                         return
-                except Exception:  # pylint: disable=broad-exception-caught
-                    logger.info(
-                        "Attempt %s at readiness check for SigNoz container %s failed, going to retry ...",
+                    if response.status_code == HTTPStatus.SERVICE_UNAVAILABLE:
+                        logger.error(
+                            "Attempt %s: SigNoz container %s not ready yet:\n%s",
+                            attempt + 1,
+                            container,
+                            response.text,
+                        )
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    logger.error(
+                        "Attempt %s at readiness check for SigNoz container %s failed: %s",
                         attempt + 1,
                         container,
+                        e,
                     )
                 time.sleep(2)
             raise TimeoutError("timeout exceeded while waiting")
@@ -165,7 +183,7 @@ def signoz(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     return dev.wrap(
         request,
         pytestconfig,
-        "signoz",
+        cache_key,
         empty=lambda: types.SigNoz(
             self=types.TestContainerDocker(
                 id="",
@@ -180,4 +198,28 @@ def signoz(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         create=create,
         delete=delete,
         restore=restore,
+    )
+
+
+@pytest.fixture(name="signoz", scope="package")
+def signoz(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    network: Network,
+    zeus: types.TestContainerDocker,
+    gateway: types.TestContainerDocker,
+    sqlstore: types.TestContainerSQL,
+    clickhouse: types.TestContainerClickhouse,
+    request: pytest.FixtureRequest,
+    pytestconfig: pytest.Config,
+) -> types.SigNoz:
+    """
+    Package-scoped fixture for setting up SigNoz.
+    """
+    return create_signoz(
+        network=network,
+        zeus=zeus,
+        gateway=gateway,
+        sqlstore=sqlstore,
+        clickhouse=clickhouse,
+        request=request,
+        pytestconfig=pytestconfig,
     )

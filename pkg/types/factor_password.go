@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"time"
 	"unicode"
@@ -36,8 +37,8 @@ type ChangePasswordRequest struct {
 }
 
 type PostableForgotPassword struct {
-	OrgID           valuer.UUID  `json:"orgId"`
-	Email           valuer.Email `json:"email"`
+	OrgID           valuer.UUID  `json:"orgId" required:"true"`
+	Email           valuer.Email `json:"email" required:"true"`
 	FrontendBaseURL string       `json:"frontendBaseURL"`
 }
 
@@ -219,4 +220,8 @@ func comparePassword(hashedPassword string, password string) bool {
 
 func (r *ResetPasswordToken) IsExpired() bool {
 	return r.ExpiresAt.Before(time.Now())
+}
+
+func (r *ResetPasswordToken) FactorPasswordResetLink(frontendBaseUrl string) string {
+	return fmt.Sprintf("%s/password-reset?token=%s", frontendBaseUrl, r.Token)
 }

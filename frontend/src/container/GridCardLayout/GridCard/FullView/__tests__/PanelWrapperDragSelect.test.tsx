@@ -1,7 +1,6 @@
-/* eslint-disable sonarjs/no-duplicate-string */
-
 import { MutableRefObject } from 'react';
 import { PANEL_TYPES } from 'constants/queryBuilder';
+import { PanelMode } from 'container/DashboardContainer/visualization/panels/types';
 import PanelWrapper from 'container/PanelWrapper/PanelWrapper';
 import { RowData } from 'lib/query/createTableColumnsFromQuery';
 import { render, screen, waitFor } from 'tests/test-utils';
@@ -156,6 +155,7 @@ describe('PanelWrapper with DragSelect', () => {
 
 		render(
 			<PanelWrapper
+				panelMode={PanelMode.STANDALONE_VIEW}
 				widget={mockWidget}
 				queryResponse={mockQueryResponse}
 				onDragSelect={mockOnDragSelect}

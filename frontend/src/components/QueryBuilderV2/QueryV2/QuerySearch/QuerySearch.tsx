@@ -1,4 +1,3 @@
-/* eslint-disable sonarjs/no-identical-functions */
 /* eslint-disable sonarjs/cognitive-complexity */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircleFilled } from '@ant-design/icons';
@@ -11,7 +10,6 @@ import {
 	startCompletion,
 } from '@codemirror/autocomplete';
 import { javascript } from '@codemirror/lang-javascript';
-import * as Sentry from '@sentry/react';
 import { Color } from '@signozhq/design-tokens';
 import { copilot } from '@uiw/codemirror-theme-copilot';
 import { githubLight } from '@uiw/codemirror-theme-github';
@@ -28,17 +26,16 @@ import {
 	QUERY_BUILDER_OPERATORS_BY_KEY_TYPE,
 	queryOperatorSuggestions,
 } from 'constants/antlrQueryConstants';
+import { useDashboardVariablesByType } from 'hooks/dashboard/useDashboardVariablesByType';
 import { useIsDarkMode } from 'hooks/useDarkMode';
 import useDebounce from 'hooks/useDebounce';
 import { debounce, isNull } from 'lodash-es';
 import { Info, TriangleAlert } from 'lucide-react';
-import { useDashboard } from 'providers/Dashboard/Dashboard';
 import {
 	IDetailedError,
 	IQueryContext,
 	IValidationResult,
 } from 'types/antlrQueryTypes';
-import { IDashboardVariable } from 'types/api/dashboard/getAll';
 import { IBuilderQuery } from 'types/api/queryBuilder/queryBuilderData';
 import { QueryKeyDataSuggestionsProps } from 'types/api/querySuggestions/types';
 import { DataSource } from 'types/common/queryBuilder';
@@ -87,6 +84,7 @@ interface QuerySearchProps {
 	signalSource?: string;
 	hardcodedAttributeKeys?: QueryKeyDataSuggestionsProps[];
 	onRun?: (query: string) => void;
+	showFilterSuggestionsWithoutMetric?: boolean;
 }
 
 function QuerySearch({
@@ -97,6 +95,7 @@ function QuerySearch({
 	onRun,
 	signalSource,
 	hardcodedAttributeKeys,
+	showFilterSuggestionsWithoutMetric,
 }: QuerySearchProps): JSX.Element {
 	const isDarkMode = useIsDarkMode();
 	const [valueSuggestions, setValueSuggestions] = useState<any[]>([]);
@@ -207,14 +206,9 @@ function QuerySearch({
 	const lastValueRef = useRef<string>('');
 	const isMountedRef = useRef<boolean>(true);
 
-	const { selectedDashboard } = useDashboard();
-
-	const dynamicVariables = useMemo(
-		() =>
-			Object.values(selectedDashboard?.data?.variables || {})?.filter(
-				(variable: IDashboardVariable) => variable.type === 'DYNAMIC',
-			),
-		[selectedDashboard],
+	const dashboardDynamicVariables = useDashboardVariablesByType(
+		'DYNAMIC',
+		'values',
 	);
 
 	// Add back the generateOptions function and useEffect
@@ -258,7 +252,8 @@ function QuerySearch({
 		async (searchText?: string): Promise<void> => {
 			if (
 				dataSource === DataSource.METRICS &&
-				!queryData.aggregateAttribute?.key
+				!queryData.aggregateAttribute?.key &&
+				!showFilterSuggestionsWithoutMetric
 			) {
 				setKeySuggestions([]);
 				return;
@@ -307,6 +302,7 @@ function QuerySearch({
 			queryData.aggregateAttribute?.key,
 			signalSource,
 			hardcodedAttributeKeys,
+			showFilterSuggestionsWithoutMetric,
 		],
 	);
 
@@ -395,7 +391,6 @@ function QuerySearch({
 
 	// Use callback to prevent dependency changes on each render
 	const fetchValueSuggestions = useCallback(
-		// eslint-disable-next-line sonarjs/cognitive-complexity
 		async ({
 			key,
 			searchText,
@@ -570,15 +565,7 @@ function QuerySearch({
 		const lastPos = lastPosRef.current;
 
 		if (newPos.line !== lastPos.line || newPos.ch !== lastPos.ch) {
-			setCursorPos((lastPos) => {
-				if (newPos.ch !== lastPos.ch && newPos.ch === 0) {
-					Sentry.captureEvent({
-						message: `Cursor jumped to start of line from ${lastPos.ch} to ${newPos.ch}`,
-						level: 'warning',
-					});
-				}
-				return newPos;
-			});
+			setCursorPos(newPos);
 			lastPosRef.current = newPos;
 
 			if (doc) {
@@ -682,7 +669,6 @@ function QuerySearch({
 	};
 
 	// Enhanced myCompletions function to better use context including query pairs
-	// eslint-disable-next-line sonarjs/cognitive-complexity
 	function autoSuggestions(context: CompletionContext): CompletionResult | null {
 		// This matches words before the cursor position
 		// eslint-disable-next-line no-useless-escape
@@ -1069,7 +1055,7 @@ function QuerySearch({
 			);
 
 			// Add dynamic variables suggestions for the current key
-			const variableName = dynamicVariables?.find(
+			const variableName = dashboardDynamicVariables?.find(
 				(variable) => variable?.dynamicVariablesAttribute === keyName,
 			)?.name;
 
@@ -1100,7 +1086,6 @@ function QuerySearch({
 				!(isLoadingSuggestions && lastKeyRef.current === keyName);
 
 			if (shouldFetch) {
-				// eslint-disable-next-line sonarjs/no-identical-functions
 				debouncedFetchValueSuggestions({
 					key: keyName,
 					searchText,
@@ -1334,7 +1319,10 @@ function QuerySearch({
 			)}
 
 			<div className="query-where-clause-editor-container">
-				<Tooltip title={getTooltipContent()} placement="left">
+				<Tooltip
+					title={<div data-log-detail-ignore="true">{getTooltipContent()}</div>}
+					placement="left"
+				>
 					<a
 						href="https://signoz.io/docs/userguide/search-syntax/"
 						target="_blank"
@@ -1568,6 +1556,7 @@ QuerySearch.defaultProps = {
 	hardcodedAttributeKeys: undefined,
 	placeholder:
 		"Enter your filter query (e.g., http.status_code >= 500 AND service.name = 'frontend')",
+	showFilterSuggestionsWithoutMetric: false,
 };
 
 export default QuerySearch;

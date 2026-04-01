@@ -186,7 +186,6 @@ const generateTooltipContent = (
 						show: item.show || false,
 						color,
 						label,
-						// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 						// @ts-ignore
 						focus: item?._focus || false,
 						value,

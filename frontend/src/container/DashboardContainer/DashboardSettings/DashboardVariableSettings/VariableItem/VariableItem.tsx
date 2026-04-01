@@ -1,8 +1,7 @@
-/* eslint-disable jsx-a11y/no-static-element-interactions */
-/* eslint-disable jsx-a11y/click-events-have-key-events */
 /* eslint-disable sonarjs/cognitive-complexity */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from 'react-query';
+// eslint-disable-next-line no-restricted-imports
 import { useSelector } from 'react-redux';
 import { orange } from '@ant-design/colors';
 import { Color } from '@signozhq/design-tokens';
@@ -18,8 +17,8 @@ import { useWidgetsByDynamicVariableId } from 'hooks/dashboard/useWidgetsByDynam
 import { getWidgetsHavingDynamicVariableAttribute } from 'hooks/dashboard/utils';
 import { useGetFieldValues } from 'hooks/dynamicVariables/useGetFieldValues';
 import { useIsDarkMode } from 'hooks/useDarkMode';
-import { commaValuesParser } from 'lib/dashbaordVariables/customCommaValuesParser';
-import sortValues from 'lib/dashbaordVariables/sortVariableValues';
+import { commaValuesParser } from 'lib/dashboardVariables/customCommaValuesParser';
+import sortValues from 'lib/dashboardVariables/sortVariableValues';
 import { isEmpty, map } from 'lodash-es';
 import {
 	ArrowLeft,
@@ -31,7 +30,7 @@ import {
 	Pyramid,
 	X,
 } from 'lucide-react';
-import { useDashboard } from 'providers/Dashboard/Dashboard';
+import { useDashboardStore } from 'providers/Dashboard/store/useDashboardStore';
 import { AppState } from 'store/reducers';
 import {
 	IDashboardVariable,
@@ -240,7 +239,7 @@ function VariableItem({
 
 	const [selectedWidgets, setSelectedWidgets] = useState<string[]>([]);
 
-	const { selectedDashboard } = useDashboard();
+	const { selectedDashboard } = useDashboardStore();
 	const widgetsByDynamicVariableId = useWidgetsByDynamicVariableId();
 
 	useEffect(() => {
@@ -536,7 +535,6 @@ function VariableItem({
 								type="text"
 								icon={<Pyramid size={14} />}
 								className={cx(
-									// eslint-disable-next-line sonarjs/no-duplicate-string
 									'variable-type-btn',
 									queryType === 'DYNAMIC' ? 'selected' : '',
 								)}
@@ -594,7 +592,6 @@ function VariableItem({
 								type="text"
 								icon={<DatabaseZap size={14} />}
 								className={cx(
-									// eslint-disable-next-line sonarjs/no-duplicate-string
 									'variable-type-btn',
 									queryType === 'QUERY' ? 'selected' : '',
 								)}

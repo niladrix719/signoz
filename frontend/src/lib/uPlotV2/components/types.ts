@@ -1,4 +1,5 @@
 import { ReactNode } from 'react';
+import { Timezone } from 'components/CustomTimePicker/timezoneUtils';
 import { PrecisionOption } from 'components/Graph/types';
 import uPlot from 'uplot';
 
@@ -59,11 +60,30 @@ export interface TooltipRenderArgs {
 	viaSync: boolean;
 }
 
-export type TooltipProps = TooltipRenderArgs & {
-	timezone: string;
+export interface BaseTooltipProps {
+	showTooltipHeader?: boolean;
+	timezone?: Timezone;
 	yAxisUnit?: string;
 	decimalPrecision?: PrecisionOption;
-};
+	content?: TooltipContentItem[];
+}
+
+export interface TimeSeriesTooltipProps
+	extends BaseTooltipProps,
+		TooltipRenderArgs {}
+
+export interface BarTooltipProps extends BaseTooltipProps, TooltipRenderArgs {
+	isStackedBarChart?: boolean;
+}
+
+export interface HistogramTooltipProps
+	extends BaseTooltipProps,
+		TooltipRenderArgs {}
+
+export type TooltipProps =
+	| TimeSeriesTooltipProps
+	| BarTooltipProps
+	| HistogramTooltipProps;
 
 export enum LegendPosition {
 	BOTTOM = 'bottom',
@@ -75,7 +95,7 @@ export interface LegendConfig {
 export interface LegendProps {
 	position?: LegendPosition;
 	config: UPlotConfigBuilder;
-	legendsPerSet?: number;
+	averageLegendWidth?: number;
 }
 
 export interface TooltipContentItem {

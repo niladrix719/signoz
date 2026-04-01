@@ -18,8 +18,7 @@ import {
 	TowerControl,
 	Workflow,
 } from 'lucide-react';
-
-export type UserRole = 'ADMIN' | 'EDITOR' | 'AUTHOR' | 'VIEWER';
+import { ROLES } from 'types/roles';
 
 export type CmdAction = {
 	id: string;
@@ -28,7 +27,7 @@ export type CmdAction = {
 	keywords?: string;
 	section?: string;
 	icon?: React.ReactNode;
-	roles?: UserRole[];
+	roles?: ROLES[];
 	perform: () => void;
 };
 
@@ -248,16 +247,6 @@ export function createShortcutActions(deps: ActionDeps): CmdAction[] {
 			icon: <Settings size={14} />,
 			roles: ['ADMIN', 'EDITOR'],
 			perform: (): void => navigate(ROUTES.BILLING),
-		},
-		{
-			id: 'my-settings-api-keys',
-			name: 'Go to Account Settings API Keys',
-			shortcut: [GlobalShortcutsName.NavigateToSettingsAPIKeys],
-			keywords: 'account settings api keys',
-			section: 'Settings',
-			icon: <Settings size={14} />,
-			roles: ['ADMIN', 'EDITOR'],
-			perform: (): void => navigate(ROUTES.API_KEYS),
 		},
 	];
 }

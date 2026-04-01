@@ -7,12 +7,14 @@ import {
 	useState,
 } from 'react';
 import { UseQueryResult } from 'react-query';
+// eslint-disable-next-line no-restricted-imports
 import { useDispatch } from 'react-redux';
 import { useLocation } from 'react-router-dom';
 import { useNavigateToExplorer } from 'components/CeleryTask/useNavigateToExplorer';
 import { ToggleGraphProps } from 'components/Graph/types';
 import { QueryParams } from 'constants/query';
 import { PANEL_TYPES } from 'constants/queryBuilder';
+import { PanelMode } from 'container/DashboardContainer/visualization/panels/types';
 import { handleGraphClick } from 'container/GridCardLayout/GridCard/utils';
 import { useGraphClickToShowButton } from 'container/GridCardLayout/useGraphClickToShowButton';
 import useNavigateToExplorerPages from 'container/GridCardLayout/useNavigateToExplorerPages';
@@ -183,6 +185,7 @@ function WidgetGraph({
 			}}
 		>
 			<PanelWrapper
+				panelMode={PanelMode.DASHBOARD_EDIT}
 				widget={selectedWidget}
 				queryResponse={queryResponse}
 				setRequestData={setRequestData}

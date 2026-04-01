@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 
+	schemamigrator "github.com/SigNoz/signoz-otel-collector/cmd/signozschemamigrator/schema_migrator"
 	"github.com/SigNoz/signoz/pkg/errors"
 	"github.com/SigNoz/signoz/pkg/querybuilder"
 	qbtypes "github.com/SigNoz/signoz/pkg/types/querybuildertypes/querybuildertypesv5"
@@ -30,9 +31,8 @@ func NewJSONConditionBuilder(key *telemetrytypes.TelemetryFieldKey, valueType te
 	return &jsonConditionBuilder{key: key, valueType: telemetrytypes.MappingFieldDataTypeToJSONDataType[valueType]}
 }
 
-// BuildCondition builds the full WHERE condition for body_json JSON paths
+// BuildCondition builds the full WHERE condition for body_v2 JSON paths.
 func (c *jsonConditionBuilder) buildJSONCondition(operator qbtypes.FilterOperator, value any, sb *sqlbuilder.SelectBuilder) (string, error) {
-
 	conditions := []string{}
 	for _, node := range c.key.JSONPlan {
 		condition, err := c.emitPlannedCondition(node, operator, value, sb)
@@ -41,10 +41,17 @@ func (c *jsonConditionBuilder) buildJSONCondition(operator qbtypes.FilterOperato
 		}
 		conditions = append(conditions, condition)
 	}
-	return sb.Or(conditions...), nil
+	baseCond := sb.Or(conditions...)
+
+	// path index
+	if operator.AddDefaultExistsFilter() {
+		pathIndex := fmt.Sprintf(`has(%s, '%s')`, schemamigrator.JSONPathsIndexExpr(LogsV2BodyV2Column), c.key.ArrayParentPaths()[0])
+		return sb.And(baseCond, pathIndex), nil
+	}
+	return baseCond, nil
 }
 
-// emitPlannedCondition handles paths with array traversal
+// emitPlannedCondition handles paths with array traversal.
 func (c *jsonConditionBuilder) emitPlannedCondition(node *telemetrytypes.JSONAccessNode, operator qbtypes.FilterOperator, value any, sb *sqlbuilder.SelectBuilder) (string, error) {
 	// Build traversal + terminal recursively per-hop
 	compiled, err := c.recurseArrayHops(node, operator, value, sb)
@@ -54,7 +61,7 @@ func (c *jsonConditionBuilder) emitPlannedCondition(node *telemetrytypes.JSONAcc
 	return compiled, nil
 }
 
-// buildTerminalCondition creates the innermost condition
+// buildTerminalCondition creates the innermost condition.
 func (c *jsonConditionBuilder) buildTerminalCondition(node *telemetrytypes.JSONAccessNode, operator qbtypes.FilterOperator, value any, sb *sqlbuilder.SelectBuilder) (string, error) {
 	if node.TerminalConfig.ElemType.IsArray {
 		conditions := []string{}
@@ -73,9 +80,9 @@ func (c *jsonConditionBuilder) buildTerminalCondition(node *telemetrytypes.JSONA
 
 			// switch operator for array membership checks
 			switch operator {
-			case qbtypes.FilterOperatorContains, qbtypes.FilterOperatorIn:
+			case qbtypes.FilterOperatorContains:
 				operator = qbtypes.FilterOperatorEqual
-			case qbtypes.FilterOperatorNotContains, qbtypes.FilterOperatorNotIn:
+			case qbtypes.FilterOperatorNotContains:
 				operator = qbtypes.FilterOperatorNotEqual
 			}
 		}
@@ -93,11 +100,11 @@ func (c *jsonConditionBuilder) buildTerminalCondition(node *telemetrytypes.JSONA
 }
 
 // buildPrimitiveTerminalCondition builds the condition if the terminal node is a primitive type
-// it handles the data type collisions and utilizes indexes for the condition if available
+// it handles the data type collisions and utilizes indexes for the condition if available.
 func (c *jsonConditionBuilder) buildPrimitiveTerminalCondition(node *telemetrytypes.JSONAccessNode, operator qbtypes.FilterOperator, value any, sb *sqlbuilder.SelectBuilder) (string, error) {
 	fieldPath := node.FieldPath()
 	conditions := []string{}
-	var formattedValue any = value
+	var formattedValue = value
 	if operator.IsStringSearchOperator() {
 		formattedValue = querybuilder.FormatValueForContains(value)
 	}
@@ -164,7 +171,7 @@ func (c *jsonConditionBuilder) buildPrimitiveTerminalCondition(node *telemetryty
 	return conditions[0], nil
 }
 
-// buildArrayMembershipCondition handles array membership checks
+// buildArrayMembershipCondition handles array membership checks.
 func (c *jsonConditionBuilder) buildArrayMembershipCondition(node *telemetrytypes.JSONAccessNode, operator qbtypes.FilterOperator, value any, sb *sqlbuilder.SelectBuilder) (string, error) {
 	arrayPath := node.FieldPath()
 	localKeyCopy := *node.TerminalConfig.Key
@@ -191,16 +198,17 @@ func (c *jsonConditionBuilder) buildArrayMembershipCondition(node *telemetrytype
 		arrayExpr = typedArrayExpr()
 	}
 
-	fieldExpr, value := querybuilder.DataTypeCollisionHandledFieldName(&localKeyCopy, value, "x", operator)
+	key := "x"
+	fieldExpr, value := querybuilder.DataTypeCollisionHandledFieldName(&localKeyCopy, value, key, operator)
 	op, err := c.applyOperator(sb, fieldExpr, operator, value)
 	if err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("arrayExists(%s -> %s, %s)", fieldExpr, op, arrayExpr), nil
+	return fmt.Sprintf("arrayExists(%s -> %s, %s)", key, op, arrayExpr), nil
 }
 
-// recurseArrayHops recursively builds array traversal conditions
+// recurseArrayHops recursively builds array traversal conditions.
 func (c *jsonConditionBuilder) recurseArrayHops(current *telemetrytypes.JSONAccessNode, operator qbtypes.FilterOperator, value any, sb *sqlbuilder.SelectBuilder) (string, error) {
 	if current == nil {
 		return "", errors.NewInternalf(CodeArrayNavigationFailed, "navigation failed, current node is nil")
@@ -279,27 +287,31 @@ func (c *jsonConditionBuilder) applyOperator(sb *sqlbuilder.SelectBuilder, field
 	case qbtypes.FilterOperatorNotContains:
 		return sb.NotILike(fieldExpr, fmt.Sprintf("%%%v%%", value)), nil
 	case qbtypes.FilterOperatorIn, qbtypes.FilterOperatorNotIn:
-		// emulate IN/NOT IN using OR/AND over equals to leverage indexes consistently
 		values, ok := value.([]any)
 		if !ok {
 			values = []any{value}
 		}
-		conds := []string{}
-		for _, v := range values {
-			if operator == qbtypes.FilterOperatorIn {
-				conds = append(conds, sb.E(fieldExpr, v))
-			} else {
-				conds = append(conds, sb.NE(fieldExpr, v))
-			}
-		}
 		if operator == qbtypes.FilterOperatorIn {
-			return sb.Or(conds...), nil
+			return sb.In(fieldExpr, values...), nil
 		}
-		return sb.And(conds...), nil
+		return sb.NotIn(fieldExpr, values...), nil
 	case qbtypes.FilterOperatorExists:
-		return fmt.Sprintf("%s IS NOT NULL", fieldExpr), nil
+		return sb.IsNotNull(fieldExpr), nil
 	case qbtypes.FilterOperatorNotExists:
-		return fmt.Sprintf("%s IS NULL", fieldExpr), nil
+		return sb.IsNull(fieldExpr), nil
+	// between and not between
+	case qbtypes.FilterOperatorBetween, qbtypes.FilterOperatorNotBetween:
+		values, ok := value.([]any)
+		if !ok {
+			return "", qbtypes.ErrBetweenValues
+		}
+		if len(values) != 2 {
+			return "", qbtypes.ErrBetweenValues
+		}
+		if operator == qbtypes.FilterOperatorBetween {
+			return sb.Between(fieldExpr, values[0], values[1]), nil
+		}
+		return sb.NotBetween(fieldExpr, values[0], values[1]), nil
 	default:
 		return "", qbtypes.ErrUnsupportedOperator
 	}

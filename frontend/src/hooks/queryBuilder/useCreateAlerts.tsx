@@ -1,5 +1,6 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { useMutation } from 'react-query';
+// eslint-disable-next-line no-restricted-imports
 import { useSelector } from 'react-redux';
 import logEvent from 'api/common/logEvent';
 import { getSubstituteVars } from 'api/dashboard/substitute_vars';
@@ -10,13 +11,15 @@ import { ENTITY_VERSION_V5 } from 'constants/app';
 import { QueryParams } from 'constants/query';
 import ROUTES from 'constants/routes';
 import { MenuItemKeys } from 'container/GridCardLayout/WidgetHeader/contants';
+import { useDashboardVariables } from 'hooks/dashboard/useDashboardVariables';
+import { useDashboardVariablesByType } from 'hooks/dashboard/useDashboardVariablesByType';
 import { useNotifications } from 'hooks/useNotifications';
-import { getDashboardVariables } from 'lib/dashbaordVariables/getDashboardVariables';
+import { getDashboardVariables } from 'lib/dashboardVariables/getDashboardVariables';
 import { mapQueryDataFromApi } from 'lib/newQueryBuilder/queryBuilderMappers/mapQueryDataFromApi';
 import { isEmpty } from 'lodash-es';
-import { useDashboard } from 'providers/Dashboard/Dashboard';
+import { useDashboardStore } from 'providers/Dashboard/store/useDashboardStore';
 import { AppState } from 'store/reducers';
-import { IDashboardVariable, Widgets } from 'types/api/dashboard/getAll';
+import { Widgets } from 'types/api/dashboard/getAll';
 import { GlobalReducer } from 'types/reducer/globalTime';
 import { getGraphType } from 'utils/getGraphType';
 
@@ -30,14 +33,12 @@ const useCreateAlerts = (widget?: Widgets, caller?: string): VoidFunction => {
 
 	const { notifications } = useNotifications();
 
-	const { selectedDashboard } = useDashboard();
+	const { selectedDashboard } = useDashboardStore();
 
-	const dynamicVariables = useMemo(
-		() =>
-			Object.values(selectedDashboard?.data?.variables || {})?.filter(
-				(variable: IDashboardVariable) => variable.type === 'DYNAMIC',
-			),
-		[selectedDashboard],
+	const { dashboardVariables } = useDashboardVariables();
+	const dashboardDynamicVariables = useDashboardVariablesByType(
+		'DYNAMIC',
+		'values',
 	);
 
 	return useCallback(() => {
@@ -68,9 +69,9 @@ const useCreateAlerts = (widget?: Widgets, caller?: string): VoidFunction => {
 			globalSelectedInterval,
 			graphType: getGraphType(widget.panelTypes),
 			selectedTime: widget.timePreferance,
-			variables: getDashboardVariables(selectedDashboard?.data.variables),
+			variables: getDashboardVariables(dashboardVariables),
 			originalGraphType: widget.panelTypes,
-			dynamicVariables,
+			dynamicVariables: dashboardDynamicVariables,
 		});
 		queryRangeMutation.mutate(queryPayload, {
 			onSuccess: (data) => {
@@ -104,10 +105,9 @@ const useCreateAlerts = (widget?: Widgets, caller?: string): VoidFunction => {
 		globalSelectedInterval,
 		notifications,
 		queryRangeMutation,
-		selectedDashboard?.data.variables,
-		selectedDashboard?.data.version,
+		dashboardVariables,
+		dashboardDynamicVariables,
 		widget,
-		dynamicVariables,
 	]);
 };
 

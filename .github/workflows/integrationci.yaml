@@ -29,6 +29,7 @@ jobs:
       - name: fmt
         run: |
           make py-fmt
+          git diff --exit-code -- tests/integration/
       - name: lint
         run: |
           make py-lint
@@ -42,19 +43,23 @@ jobs:
           - callbackauthn
           - cloudintegrations
           - dashboard
-          - querier
-          - ttl
-          - preference
           - logspipelines
+          - preference
+          - querier
+          - role
+          - ttl
           - alerts
+          - ingestionkeys
+          - rootuser
+          - serviceaccount
         sqlstore-provider:
           - postgres
           - sqlite
         clickhouse-version:
           - 25.5.6
-          - 25.10.1
+          - 25.12.5
         schema-migrator-version:
-          - v0.129.7
+          - v0.142.0
         postgres-version:
           - 15
     if: |

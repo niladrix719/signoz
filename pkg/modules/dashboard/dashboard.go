@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/SigNoz/signoz/pkg/modules/role"
+	"github.com/SigNoz/signoz/pkg/authz"
 	"github.com/SigNoz/signoz/pkg/statsreporter"
 	"github.com/SigNoz/signoz/pkg/types"
 	"github.com/SigNoz/signoz/pkg/types/authtypes"
@@ -43,7 +43,7 @@ type Module interface {
 
 	Update(ctx context.Context, orgID valuer.UUID, id valuer.UUID, updatedBy string, data dashboardtypes.UpdatableDashboard, diff int) (*dashboardtypes.Dashboard, error)
 
-	LockUnlock(ctx context.Context, orgID valuer.UUID, id valuer.UUID, updatedBy string, role types.Role, lock bool) error
+	LockUnlock(ctx context.Context, orgID valuer.UUID, id valuer.UUID, updatedBy string, isAdmin bool, lock bool) error
 
 	Delete(ctx context.Context, orgID valuer.UUID, id valuer.UUID) error
 
@@ -51,7 +51,7 @@ type Module interface {
 
 	statsreporter.StatsCollector
 
-	role.RegisterTypeable
+	authz.RegisterTypeable
 }
 
 type Handler interface {
