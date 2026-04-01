@@ -11,14 +11,13 @@ import uPlot, { AlignedData } from 'uplot';
 import onClickPlugin from './plugins/onClickPlugin';
 import tooltipPlugin from './plugins/tooltipPlugin';
 import { getXAxisScale } from './utils/getXAxisScale';
+import { getYAxisScale } from './utils/getYAxisScale';
 
 export interface GetUplotHeatmapChartOptionsProps {
 	dimensions: Dimensions;
 	isDarkMode: boolean;
 	data: AlignedData;
-	yAxisRange: { min: number; max: number };
 	bucketLabels: string[];
-	ySplits?: number[];
 	timeBucketIntervalSec: number;
 	heatmapColors: string[];
 	yAxisUnit?: string;
@@ -30,7 +29,7 @@ export interface GetUplotHeatmapChartOptionsProps {
 	onClickHandler?: (...args: any[]) => void;
 	queryResponse?: any;
 	timeSeriesData?: any; // Original time series data for plugins
-	bounds?: number[]; // Bucket bounds for plugins
+	bounds?: number[]; // Bucket bounds for Y-axis scale and rendering
 	fieldNames?: string[];
 }
 
@@ -63,23 +62,13 @@ function calculateYAxisSize(
 }
 
 /**
- * Find bucket label for a given split value
- */
-function findBucketLabel(splitValue: number, bucketLabels: string[]): string {
-	const bucketIdx = Math.floor(splitValue);
-	return bucketLabels[bucketIdx] || '';
-}
-
-/**
  * Generate uPlot options for heatmap visualization
  */
 export function getUplotHeatmapChartOptions({
 	dimensions,
 	isDarkMode,
 	data: _data,
-	yAxisRange,
 	bucketLabels,
-	ySplits,
 	timeBucketIntervalSec,
 	heatmapColors,
 	yAxisUnit,
@@ -158,12 +147,15 @@ export function getUplotHeatmapChartOptions({
 			xSizes.push(xTileSize);
 		}
 
-		// Pre-compute y positions and sizes for each bucket
+		// Pre-compute y positions and sizes for each bucket using actual bounds
+		const boundsArr = yData?.bounds as number[];
 		const yPositions: number[] = [];
 		const ySizes: number[] = [];
 		for (let bi = 0; bi < yBinQty; bi++) {
-			const yTop = u.valToPos(bi + 1, 'y');
-			const yBottom = u.valToPos(bi, 'y');
+			const lowerBound = boundsArr ? boundsArr[bi] : bi;
+			const upperBound = boundsArr ? boundsArr[bi + 1] : bi + 1;
+			const yTop = u.valToPos(upperBound, 'y');
+			const yBottom = u.valToPos(lowerBound, 'y');
 			yPositions.push(Math.min(yTop, yBottom));
 			ySizes.push(Math.ceil(Math.abs(yBottom - yTop)));
 		}
@@ -346,15 +338,11 @@ export function getUplotHeatmapChartOptions({
 				show: true,
 				stroke: axisColor,
 				grid: { show: false },
-				splits: ySplits ? (): number[] => ySplits : undefined,
-				values: (_u: uPlot, splits: number[]): string[] =>
-					splits.map((split) => {
-						const label = findBucketLabel(split, bucketLabels);
-						if (yAxisUnit && yAxisUnit !== 'none') {
-							return `${label} ${yAxisUnit}`;
-						}
-						return label;
-					}),
+				values:
+					yAxisUnit && yAxisUnit !== 'none'
+						? (_u: uPlot, splits: number[]): string[] =>
+								splits.map((v) => `${v} ${yAxisUnit}`)
+						: undefined,
 				size: (self: uPlot, values: string[] | null): number =>
 					calculateYAxisSize(values, self?.ctx || null),
 			},
@@ -364,7 +352,13 @@ export function getUplotHeatmapChartOptions({
 				...timeScaleProps,
 			},
 			y: {
-				range: (): [number, number] => [yAxisRange.min, yAxisRange.max],
+				...getYAxisScale({
+					thresholds: [],
+					series: [],
+					softMin: bounds && bounds.length >= 2 ? bounds[0] : null,
+					softMax: bounds && bounds.length >= 2 ? bounds[bounds.length - 1] : null,
+					yAxisUnit,
+				}),
 			},
 		},
 		series: [

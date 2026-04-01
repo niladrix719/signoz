@@ -105,22 +105,23 @@ export function extractAndProcessHeatmapData(
 		}));
 	}
 
-	const numBuckets = Math.max(0, firstBounds.length - 1);
-	const bucketLabels = buildBucketLabels(firstBounds, undefined, numBuckets);
+	const sortedBounds = [...firstBounds].sort((a, b) => a - b);
+	const numBuckets = Math.max(0, sortedBounds.length - 1);
+	const bucketLabels = buildBucketLabels(sortedBounds, undefined, numBuckets);
 
 	// Convert to uPlot format
 	const timestamps = finalValues.map((v: any) => v.timestamp / 1000); // ms to seconds
 	const counts = finalValues.map((v: any) => v.values || []);
-	const bucketIndices = Array.from({ length: numBuckets }, (_, i) => i);
 	const [xs, ys, countsFlat] = convertToHeatmapData(
 		timestamps,
-		bucketIndices,
+		sortedBounds,
 		counts,
 	);
 
 	const yData = ys as any;
 	yData.counts = countsFlat;
 	yData.xs = xs;
+	yData.bounds = sortedBounds; // actual bucket boundaries for Y-axis scale and rendering
 	const data = ([xs, yData] as unknown) as AlignedData;
 
 	// Calculate time interval
@@ -137,7 +138,7 @@ export function extractAndProcessHeatmapData(
 					{
 						labels: allSeries[0]?.labels || [],
 						values: finalValues,
-						bounds: firstBounds,
+						bounds: sortedBounds,
 					},
 				],
 			},
@@ -166,7 +167,7 @@ export function extractAndProcessHeatmapData(
 	}
 
 	return {
-		bounds: firstBounds,
+		bounds: sortedBounds,
 		values: finalValues,
 		originalSeries: allSeries[0],
 		numBuckets,
@@ -180,11 +181,12 @@ export function extractAndProcessHeatmapData(
 
 export function convertToHeatmapData(
 	timestamps: number[],
-	bucketIndices: number[],
+	bucketBounds: number[],
 	counts: number[][],
 ): [number[], number[], number[]] {
 	const numTimestamps = timestamps.length;
-	const numBuckets = bucketIndices.length;
+	// bounds has numBuckets+1 entries; lower bounds are bounds[0..numBuckets-1]
+	const numBuckets = Math.max(0, bucketBounds.length - 1);
 
 	const xs: number[] = [];
 	const ys: number[] = [];
@@ -197,7 +199,7 @@ export function convertToHeatmapData(
 		for (let bi = 0; bi < numBuckets; bi++) {
 			const count = timestampCounts[bi] || 0;
 			xs.push(timestamp);
-			ys.push(bi);
+			ys.push(bucketBounds[bi]); // actual lower bound value
 			countsFlat.push(count);
 		}
 	}
@@ -244,6 +246,7 @@ export function heatmapPaths(opts: {
 				const ys = dataY as number[];
 				const xs = yData?.xs as number[];
 				const counts = yData?.counts as number[];
+				const bounds = yData?.bounds as number[];
 
 				const dlen = xs?.length || 0;
 
@@ -270,21 +273,23 @@ export function heatmapPaths(opts: {
 					valToPosX(xBinIncr, scaleX, xDim, xOff) - valToPosX(0, scaleX, xDim, xOff),
 				);
 
-				// Y size: calculate using bucket boundaries for correct top row placement
+				// Y size: calculate using actual bucket boundaries
 				const yScale = scaleY as any;
-				const yMin = yScale.min ?? 0;
-				const yMax = yScale.max ?? yBinQty;
+				const yMin = yScale.min ?? (bounds ? bounds[0] : 0);
+				const yMax = yScale.max ?? (bounds ? bounds[bounds.length - 1] : yBinQty);
 				const totalYRange = yMax - yMin;
 				if (totalYRange <= 0) {
 					return null;
 				}
 
-				// Pre-calculate tile positions
+				// Pre-calculate tile positions using actual bound values
 				const cys: number[] = [];
 				const ySizes: number[] = [];
 				for (let bi = 0; bi < yBinQty; bi++) {
-					const yTop = valToPosY(ys[bi] + 1, scaleY, yDim, yOff);
-					const yBottom = valToPosY(ys[bi], scaleY, yDim, yOff);
+					const lowerBound = bounds ? bounds[bi] : bi;
+					const upperBound = bounds ? bounds[bi + 1] : bi + 1;
+					const yTop = valToPosY(upperBound, scaleY, yDim, yOff);
+					const yBottom = valToPosY(lowerBound, scaleY, yDim, yOff);
 					const yPos = Math.min(yTop, yBottom);
 					const ySize = Math.abs(yBottom - yTop);
 					cys.push(round(yPos));
@@ -439,22 +444,6 @@ export function countsToFills(
 	};
 }
 
-export function formatMs(val: number): string {
-	if (val === 0) {
-		return '0';
-	}
-	if (val < 0.01) {
-		return val.toExponential(2);
-	}
-	if (val < 1) {
-		return val.toFixed(3);
-	}
-	if (val < 1000) {
-		return val.toFixed(2);
-	}
-	return val.toFixed(0);
-}
-
 export function buildBucketLabels(
 	bucketBounds: number[],
 	_bucketStarts: number[] | undefined,
@@ -466,12 +455,7 @@ export function buildBucketLabels(
 		const start = bucketBounds[i];
 		const end = bucketBounds[i + 1] ?? start;
 
-		const startMs = start / 1000000;
-		const endMs = end / 1000000;
-		const label =
-			end === start
-				? `${formatMs(startMs)}ms`
-				: `${formatMs(startMs)}-${formatMs(endMs)}ms`;
+		const label = end === start ? `${start}` : `${start}-${end}`;
 
 		finalLabels.push(label);
 	}

@@ -14,11 +14,7 @@ import { useTimezone } from 'providers/Timezone';
 import { getTimeRange } from 'utils/getTimeRange';
 
 import { HEATMAP_COLOR_GRADIENTS } from './constants';
-import {
-	extractAndProcessHeatmapData,
-	generateYSplits,
-	getHeatmapColors,
-} from './heatmap';
+import { extractAndProcessHeatmapData, getHeatmapColors } from './heatmap';
 import { PanelWrapperProps } from './panelWrapper.types';
 
 function HeatmapPanelWrapper({
@@ -153,16 +149,11 @@ function HeatmapPanelWrapper({
 			return null;
 		}
 
-		const yAxisRange = { min: 0, max: heatmapData.numBuckets };
-		const ySplits = generateYSplits(heatmapData.numBuckets);
-
 		return getUplotHeatmapChartOptions({
 			dimensions: containerDimensions,
 			isDarkMode,
 			data: heatmapData.data,
-			yAxisRange,
 			bucketLabels: heatmapData.bucketLabels,
-			ySplits,
 			timeBucketIntervalSec: heatmapData.timeBucketIntervalSec,
 			heatmapColors,
 			yAxisUnit: widget.yAxisUnit,
